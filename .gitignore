@@ -1,0 +1,51 @@
+# Machine-local settings and overrides
+GamePaths.local.props
+*.local.*
+!*.local.*.example
+.local/
+.env
+.env.*
+!.env.example
+*.pfx
+*.snk
+secrets/
+
+# Decompiled game code. Copyrighted and machine-specific; regenerate with
+# tools/Decompile-GameCode.ps1. Never commit or push it.
+HumanHostCodebase/
+
+# Downloads and caches (BepInEx zips, tool packages)
+.cache/
+
+# Game-install copies: runtime state, logs, configs, saves, third-party mods
+BepInEx/
+*.log
+*.cfg
+LogOutput*.txt
+output_log.txt
+
+# .NET build output
+bin/
+obj/
+dist/
+*.user
+*.suo
+*.nupkg
+artifacts/
+
+# Editors and OS
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.tmp
+Thumbs.db
+Desktop.ini
+nul
+
+# Agent scratch
+.codex/
+.claude/settings.local.json
+tmp/
+temp/

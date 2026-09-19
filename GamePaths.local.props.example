@@ -1,0 +1,9 @@
+<Project>
+  <!--
+    Copy to GamePaths.local.props (gitignored) when Human Host is not installed at
+    C:\Steam\steamapps\common\Human Host.
+  -->
+  <PropertyGroup>
+    <HumanHostDir>D:\SteamLibrary\steamapps\common\Human Host</HumanHostDir>
+  </PropertyGroup>
+</Project>

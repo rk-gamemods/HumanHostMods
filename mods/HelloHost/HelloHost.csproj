@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Toolchain smoke test and starting point for new mods.
+    To start a new mod, copy this folder, rename it, and change AssemblyName,
+    RootNamespace and the PluginGuid/PluginName constants in Plugin.cs.
+  -->
+  <PropertyGroup>
+    <IsHumanHostMod>true</IsHumanHostMod>
+    <AssemblyName>HelloHost</AssemblyName>
+    <RootNamespace>HelloHost</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!-- More game assemblies, by file name without .dll:
+  <ItemGroup>
+    <HumanHostRef Include="Player" />
+    <HumanHostRef Include="Mgr_Hub" />
+  </ItemGroup>
+  -->
+</Project>

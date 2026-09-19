@@ -1,0 +1,32 @@
+<Project>
+  <!-- Turn each <HumanHostRef Include="Name" /> into a non-copied reference to Managed\Name.dll. -->
+  <ItemGroup Condition="'$(IsHumanHostMod)' == 'true'">
+    <Reference Include="@(HumanHostRef)" HintPath="$(HumanHostManagedDir)\%(Identity).dll" Private="false" />
+  </ItemGroup>
+
+  <Target Name="CheckHumanHostInstall" BeforeTargets="ResolveAssemblyReferences" Condition="'$(IsHumanHostMod)' == 'true'">
+    <Error Condition="!Exists('$(HumanHostManagedDir)\Assembly-CSharp.dll')"
+           Text="Human Host not found at '$(HumanHostDir)'. Set HumanHostDir in GamePaths.local.props." />
+    <Error Condition="!Exists('$(BepInExCoreDir)\BepInEx.dll')"
+           Text="BepInEx not installed in '$(HumanHostDir)'. Run tools\Install-BepInEx.ps1." />
+  </Target>
+
+  <!--
+    Opt-in deploy: dotnet build -p:DeployToGame=true
+    Copies the plugin into BepInEx\plugins\<AssemblyName>\. The game must be closed,
+    because a loaded plugin DLL is locked.
+  -->
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(IsHumanHostMod)' == 'true' And '$(DeployToGame)' == 'true'">
+    <PropertyGroup>
+      <ModDeployDir>$(BepInExPluginsDir)\$(AssemblyName)</ModDeployDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <ModDeployFiles Include="$(TargetPath)" />
+      <ModDeployFiles Include="$(TargetDir)$(TargetName).pdb" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+      <!-- Extra files a mod ships next to its DLL: <ModContent Include="Assets\**" /> -->
+      <ModDeployFiles Include="@(ModContent)" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModDeployFiles)" DestinationFolder="$(ModDeployDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Deployed $(AssemblyName) to $(ModDeployDir)" />
+  </Target>
+</Project>

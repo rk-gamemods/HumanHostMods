@@ -1,0 +1,44 @@
+<Project>
+  <!--
+    Shared settings for every project under this repository.
+    Machine-specific paths go in GamePaths.local.props (gitignored).
+    Copy GamePaths.local.props.example to create it.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)GamePaths.local.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)GamePaths.local.props')" />
+
+  <PropertyGroup>
+    <HumanHostDir Condition="'$(HumanHostDir)' == ''">C:\Steam\steamapps\common\Human Host</HumanHostDir>
+    <HumanHostManagedDir>$(HumanHostDir)\Human Host_Data\Managed</HumanHostManagedDir>
+    <BepInExDir>$(HumanHostDir)\BepInEx</BepInExDir>
+    <BepInExCoreDir>$(BepInExDir)\core</BepInExCoreDir>
+    <BepInExPluginsDir>$(BepInExDir)\plugins</BepInExPluginsDir>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Human Host runs Unity 2022.3 on Mono, which supports .NET Standard 2.1. -->
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <DebugType>portable</DebugType>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Authors>rk-gamemods</Authors>
+  </PropertyGroup>
+
+  <!--
+    References every BepInEx plugin needs. A mod opts in with
+    <IsHumanHostMod>true</IsHumanHostMod> and adds further game assemblies
+    (Player.dll, Creature.dll, ...) with the HumanHostRef item:
+      <HumanHostRef Include="Player" />
+  -->
+  <ItemGroup Condition="'$(IsHumanHostMod)' == 'true'">
+    <Reference Include="BepInEx" HintPath="$(BepInExCoreDir)\BepInEx.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(BepInExCoreDir)\0Harmony.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(HumanHostManagedDir)\UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(HumanHostManagedDir)\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="Assembly-CSharp" HintPath="$(HumanHostManagedDir)\Assembly-CSharp.dll" Private="false" />
+  </ItemGroup>
+</Project>
