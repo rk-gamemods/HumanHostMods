@@ -1,0 +1,11 @@
+Work in C:\Users\Admin\Documents\GIT\GameMods\HumanHostMods.
+
+Read the applicable repository instructions and research\expanded-hordes-handoff.md first. That handoff contains the previous conversation's scope, user corrections, verified facts, completed work and unresolved decisions. research\expanded-hordes.md is supporting evidence; consult it selectively rather than repeating the investigation.
+
+Help me decide the desired behavior for Expanded Hordes using basic facts and the relative difficulty, risks and performance implications of the available options. Start with the main behavior choices in the handoff, in small manageable groups. Record my answers in a concise decision document, clearly separating confirmed decisions from open questions.
+
+Do not make product decisions or recommendations for me unless an option is technically necessary. Prefer working with vanilla mechanics when comparing alternatives, but do not treat that preference as approval of an implementation approach. Custom start/end times must remain within vanilla nighttime; daytime hordes are out of scope.
+
+Do not create an implementation plan or write production code until I have made the relevant decisions and explicitly direct you to proceed. Optional features are ideas to evaluate, not requirements. Do not research every option as though it will be built. The existing research is enough to start; leave remaining uncertainties clearly labeled and only investigate further when a decision actually depends on the missing fact. No deployment, game launch, save changes or further benchmarking is authorized by this prompt.
+
+Keep responses concise. Do not dump the full technical report into chat. The prior agent over-researched and prematurely selected implementation direction; do not repeat those mistakes.

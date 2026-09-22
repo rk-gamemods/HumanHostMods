@@ -20,6 +20,19 @@ Human Host rules.
 - `Directory.Build.props` / `Directory.Build.targets`: shared MSBuild settings,
   game paths, default references, and the opt-in deploy step.
 
+## Repository glossary
+
+| Repository | Local location and scope |
+| --- | --- |
+| HumanHostMods | This private multi-mod workspace. Contains shared tools, local research and development material. It is not the public Expanded Hordes repository. |
+| [HumanHost-ExpandedHordes](https://github.com/rk-gamemods/HumanHost-ExpandedHordes) | Standalone public mod repository at `C:/Users/Admin/Documents/GIT/GameMods/HumanHost-ExpandedHordes`. See its [README](../HumanHost-ExpandedHordes/README.md) and [build instructions](../HumanHost-ExpandedHordes/docs/BUILDING.md). MIT licensed; pre-testing alpha with no guarantee of function. |
+
+Publish Expanded Hordes source from its standalone repository only. Keep this
+workspace's history, private research, game files, local configuration and logs
+out of public commits. GitHub publication does not authorize Steam Workshop
+publication. Check both working copies before transferring changes; they are
+separate Git repositories and do not synchronize automatically.
+
 ## Game facts (verify before relying on them)
 
 Recorded 2026-09-19. The game is in early access and updates often. Re-check with

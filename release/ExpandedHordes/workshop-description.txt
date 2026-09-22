@@ -1,0 +1,31 @@
+[h1]Expanded Hordes[/h1]
+Tune Horde Night's numbers, running speed and toughness while keeping the game's own Horde Night schedule.
+
+[h2]Tougher zombies without inflated health or XP[/h2]
+Set separate damage resistance for regular zombies, large zombies and bosses. The defaults prevent 25%, 40% and 50% of incoming health damage respectively. Maximum health and health-based kill XP stay unchanged. Surviving horde zombies retain resistance after dawn and save/load; ordinary attracted zombies do not receive it.
+
+[h2]Control the pressure[/h2]
+[list]
+[*]Choose a total spawn budget from 1 to 50,000 before the game's Horde Quantity percentage. The default is 1,000: at 800%, that permits up to 8,000 creations, including replacements after kills. Dawn can stop spawning sooner.
+[*]Set the simultaneous living horde target separately, default 75, and shared AI allowance, default 90. The shared allowance also affects ordinary zombies between hordes.
+[*]Adjust horde running speed, default 125%. The boost ends when spawning ends or dawn arrives. Walking and attacks keep their normal speed.
+[*]Add a per-zombie chance of large zombies or bosses, with separate region gates. Defaults are 20% large, 5% boss, starting in region 11. Random chances do not guarantee an exact ratio.
+[*]Lure nearby loaded zombies once at horde start. No distant world loading or continuous sound spam.
+[*]Retain more settled corpses: default 300, configurable up to 5,000. Native expiry, distance hiding and oldest-body cleanup still apply. Bodies do not block living horde slots. This does not keep physical ragdolls active indefinitely.
+[/list]
+
+The game's Horde Night enable switch, every-N-nights cadence, start timing and dawn remain in control. The 50,000 budget maximum is before multiplication; it is not a performance rating or a promise that a night lasts long enough to spawn that many.
+
+[h2]Configuration and requirements[/h2]
+Requires BepInEx 5 for Human Host's Unity Mono build. No additional gameplay mod is required. Prepared against Steam build 25448142 and BepInEx 5.4.23.5.
+
+Configure Expanded Hordes in HHMM or edit BepInEx/config/rkgamemods.humanhost.expandedhordes.cfg with the game closed. Launch once to create the config, then restart after edits. Use only one installed copy; disable any old manual copy before enabling the Workshop copy.
+
+[h2]Performance and compatibility[/h2]
+Higher populations, faster arrivals, bosses and additional corpses can reduce performance. No safe maximum has been measured. Corpse removal can remove loot; this mod does not provide separate loot preservation.
+
+Optional debug logging and performance profiling are off by default. Profiling records frame times and selected code timings every 15 seconds, with a bounded CSV. CPU/GPU timing is included only when the game exposes it; unavailable data is clearly marked. Bottleneck hints are estimates, and profiling itself adds overhead.
+
+Native saves and creature identities remain in use. Future native boss types use boss resistance; unlisted non-boss types use regular resistance. Mods replacing the same game methods may conflict. Forced-death effects can bypass resistance, and some hit displays may show damage before reduction. Vanilla survivor HP restoration remains unchanged.
+
+Created by rk-gamemods. Not affiliated with Virtual Matrix Studio or Valve.

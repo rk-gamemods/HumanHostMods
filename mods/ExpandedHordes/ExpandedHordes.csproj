@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsHumanHostMod>true</IsHumanHostMod>
+    <AssemblyName>ExpandedHordes</AssemblyName>
+    <RootNamespace>ExpandedHordes</RootNamespace>
+    <Version>0.2.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <HumanHostRef Include="Terrain" />
+    <HumanHostRef Include="AI" />
+    <HumanHostRef Include="Creature" />
+    <HumanHostRef Include="Kybernetik.Animancer" />
+    <HumanHostRef Include="UnityEngine.AnimationModule" />
+    <HumanHostRef Include="Player" />
+    <HumanHostRef Include="G_Save" />
+    <HumanHostRef Include="Build_System" />
+    <HumanHostRef Include="Unity.Addressables" />
+    <HumanHostRef Include="UnityEngine.PhysicsModule" />
+  </ItemGroup>
+</Project>

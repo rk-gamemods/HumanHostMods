@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../mods/ExpandedHordes/ModSettings.cs" Link="ModSettings.cs" />
+    <Compile Include="../../mods/ExpandedHordes/ModIdentity.cs" Link="ModIdentity.cs" />
+    <Reference Include="BepInEx" HintPath="$(BepInExCoreDir)/BepInEx.dll" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(HumanHostManagedDir)/UnityEngine.CoreModule.dll" />
+  </ItemGroup>
+</Project>

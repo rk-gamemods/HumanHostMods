@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../mods/ExpandedHordes/HordeRules.cs" Link="HordeRules.cs" />
+    <Compile Include="../../mods/ExpandedHordes/CombatRules.cs" Link="CombatRules.cs" />
+    <Compile Include="../../mods/ExpandedHordes/PerformanceRules.cs" Link="PerformanceRules.cs" />
+  </ItemGroup>
+</Project>
