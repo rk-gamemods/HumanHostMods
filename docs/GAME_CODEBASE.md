@@ -1,0 +1,147 @@
+# Game source and text catalogs
+
+`tools/Decompile-GameCode.ps1` generates one local reference in
+`HumanHostCodebase/`. It includes decompiled managed code, a catalog of asset
+objects, serialized gameplay fields, resolved references, and readable views.
+It does not export image, mesh, audio, video, or other bulk engine payloads.
+
+## Setup and refresh
+
+Requirements: PowerShell 7, Python 3.13, Git, ilspycmd 11+, and its .NET runtime.
+Install the Python dependencies in an isolated directory:
+
+```powershell
+py -3 -m pip install --target .cache/catalog-python -r tools/game_catalog/requirements.txt
+pwsh -NoProfile -File tools/Decompile-GameCode.ps1
+```
+
+Reuse an existing installation with `-PythonPackagesPath`, or set
+`CatalogPythonPackages` in the gitignored `GamePaths.local.props`. The command
+uses that setting before `.cache/catalog-python`. It does not install packages
+or change the game installation. Avoid refreshing while Steam is modifying the
+game files. Input changes detected during generation abort publication.
+
+`-All` remains accepted; all non-framework managed assemblies are now the
+default. `-Assemblies Player,UI` requires a new `-OutputPath` and marks its
+assembly coverage as partial. It cannot overwrite the normal full snapshot.
+`-NoGit` publishes the text without creating a commit.
+An existing output without a local Git baseline cannot be overwritten; use a
+new path for another `-NoGit` export. Outputs inside the workspace must be
+gitignored, such as `HumanHostCodebase` or a path under `.local`.
+
+## What is generated
+
+| Output | Information |
+| --- | --- |
+| `<assembly>/*.cs` | C# from game and package assemblies, with shipped PDB variable names where available |
+| `Catalog/inputs.jsonl` | Input paths, sizes, SHA-256 hashes and categories |
+| `Catalog/steam-build.json` | Steam build, branch and installed depot manifest identities, without playtime or account state |
+| `Catalog/assemblies.jsonl` | Every managed DLL, decompilation status and exclusion reason |
+| `Catalog/embedded-resources.jsonl` | Names of resources embedded in selected assemblies; resource bodies are not extracted |
+| `Catalog/serialized-files.jsonl` | Original bundle/member paths, Unity versions, external dependencies and object counts |
+| `Catalog/bundle-members.jsonl` | Serialized files and resource streams inside bundles |
+| `Catalog/objects/` | Object IDs, names, types, serialized sizes, gameplay fields and reference results |
+| `Catalog/addressables.jsonl` | Decoded addresses, GUIDs, providers, resource types, dependencies and object targets |
+| `Catalog/containers.jsonl` | Named asset paths mapped to objects |
+| `Catalog/references.jsonl` | Reference edges, source field paths, targets and resolution status |
+| `Catalog/loose-text.jsonl` | Readable installed configuration and text files |
+| `Catalog/compressed-text.jsonl` | Compressed text companions, including the game's Lua loader data |
+| `Catalog/views/LOOT.md` | Loot tags, eligible item names, loot sets and serialized source objects |
+| `Catalog/views/*.jsonl` | Searchable loot, item, spawn, recipe, localization and object indexes |
+| `Catalog/coverage.json` | Object/type counts, omitted payload categories and decoding/reference gaps |
+| `Catalog/generator.json` | Parser/decompiler versions and generator hashes, normalizing CRLF to LF |
+
+The inventory excludes the game's `Save` and `ModBrowser` runtime directories,
+`*.log`, `log-*.txt`, and `output_log.txt`, including Chromium's plugin log.
+Steam account state, playtime and download progress are excluded; build and depot
+identities are recorded separately so those transient fields do not create diffs.
+Native executable/module files and framework DLLs are inventoried. Their native
+implementations are not reconstructed as C#. The assembly manifest explicitly
+identifies framework exclusions.
+
+## Reading loot data
+
+Start with `Catalog/views/LOOT.md`. It joins these serialized relationships:
+
+1. `Loot_Mgr._All_Loot_Icons` supplies tags and item AssetReference GUIDs.
+2. Addressables entries and AssetBundle containers resolve GUIDs to objects.
+3. GameObject components locate `Icon_Info` and its `Tooltip_Text` reference.
+4. Tooltip entries provide English names and the other shipped translations.
+5. `Loot_Rate_Sets._LootSpawnRates` supplies tag/rate/stack fields.
+6. References to those sets identify containers and other serialized sources.
+
+The exported `_spawnRateRange` is a serialized field, not an unconditional drop
+probability. Consult `Loot_Mgr` and caller code for selection rules, difficulty,
+distance and runtime assignment. Dynamic game state and mod-added entries are
+not present in an installed-data snapshot.
+
+Every row retains an object ID that leads back to the object record and its
+original serialized file. Null, unresolved, ambiguous, and engine-builtin
+references are distinguished. A GUID with multiple targets retains all of them;
+the exporter does not silently select one.
+
+## Payload and schema rules
+
+UnityFS data is read through a seekable member stream. Uncompressed blocks use
+range reads; compressed blocks use a small cache. The installed game's decoder
+handles its encrypted bundle in a separate process through binary stdout.
+Decoded bundles are never saved. This still needs memory for decoding and the
+reference index.
+
+Graphical/media objects retain catalog entries, while their bodies are omitted
+with an explicit reason. Binary serialized fields retain a size/hash descriptor.
+This includes baked gore meshes stored in script objects and baked animation
+matrices; putting mesh data in a ScriptableObject does not make it gameplay text.
+Bundle preload bookkeeping is summarized; named container paths are exported
+separately. Gameplay lists, rates, IDs, strings and references are retained.
+The omission type list is versioned in `catalog.py` and emitted in coverage.
+
+Embedded Unity type trees define field layouts when available. The pinned
+exporter reuses matching embedded layouts across files, then reconstructs stripped
+layouts from installed managed DLLs. Its adapter corrects generated primitive
+array nodes and handles inline managed-reference data without Unity object headers.
+All serialized files are indexed before resolving scripts and asset references.
+Any object decoding failure prevents publication. Reference gaps remain visible
+in coverage and the reference index.
+Editor-only objects whose declaring DLLs were not shipped remain cataloged with
+an explicit `decode_gap` and a raw-data hash; their absent field schemas cannot
+be reconstructed from the installed player. These gaps are listed in coverage.
+
+## Comparisons, failure recovery and validation
+
+Records and files use deterministic ordering. Generation timestamps and absolute
+machine paths are excluded from the snapshot. Bundle content hashes are removed
+from logical file names, while original names remain in provenance records.
+Object identities combine the logical file, serialized-member ordinal and Unity
+path ID. These path IDs can change across builds; GUIDs and container paths help
+trace such changes and are not falsely described as immutable identities.
+
+Generation uses an OS-held lock and a sibling staging directory containing text
+only. The old snapshot remains available during generation. A journal and backup
+directory make publication recoverable. A failed or interrupted publication is
+rolled back on the next invocation; a completed commit is retained. Do not
+manually delete a journal or backup while a refresh is active.
+
+The command refuses dirty snapshots, ignored local files, Git remotes, and
+unrecognized output directories. Resolve such files before refreshing. Generated
+data stays out of the workspace repository and all remotes; only the separate
+local snapshot repository records it.
+
+```powershell
+py -3 tools/game_catalog/test_catalog.py --python-packages .cache/catalog-python
+git -C HumanHostCodebase log -3 --oneline
+git -C HumanHostCodebase diff HEAD~1 --stat
+git -C HumanHostCodebase diff HEAD~1 -- Catalog/views/loot-tags.jsonl
+```
+
+An unchanged-input repeat must leave the snapshot's Git HEAD and working tree
+unchanged. Changes to parser versions or generator source intentionally change
+`Catalog/generator.json`. The local unit tests exercise binary omission,
+Addressables decoding, lazy bundle reads, reference ambiguity, writer locking,
+rollback, dirty-state preservation and repeat publication.
+
+Implementation references: [UnityPy](https://github.com/K0lb3/UnityPy), the
+installed `Unity.Addressables.dll` members `ContentCatalogData.CreateLocator`
+and `SerializationUtilities.ReadObjectFromByteArray`, and the installed
+`UIResource.dll` members `EnLootIndicatorBundleResource.BeginLoad` and
+`LootIndiC.DeLootIndiBytes`. Installed DLL hashes are recorded in the inventory.

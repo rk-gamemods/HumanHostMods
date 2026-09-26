@@ -5,5 +5,7 @@
   -->
   <PropertyGroup>
     <HumanHostDir>D:\SteamLibrary\steamapps\common\Human Host</HumanHostDir>
+    <!-- Optional: reuse an existing isolated installation of tools/game_catalog/requirements.txt. -->
+    <!-- <CatalogPythonPackages>D:\Tools\catalog-python</CatalogPythonPackages> -->
   </PropertyGroup>
 </Project>

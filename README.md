@@ -9,6 +9,7 @@ plus the scripts used to set up, build and inspect them.
 - Windows, PowerShell 7
 - .NET SDK 8 or later. ilspycmd 10 and later need the .NET 10 runtime.
 - ilspycmd: `dotnet tool install -g ilspycmd`
+- Python 3.13 and the catalog dependencies described in [Game codebase](docs/GAME_CODEBASE.md).
 
 ## First-time setup
 
@@ -16,7 +17,7 @@ plus the scripts used to set up, build and inspect them.
 .\tools\Install-BepInEx.ps1        # BepInEx 5, newest stable, into the game folder
 # Launch the game once and quit, so BepInEx creates its config and log.
 .\tools\Install-UnityExplorer.ps1  # optional in-game inspector, F7 to toggle
-.\tools\Decompile-GameCode.ps1     # game code for reference, into HumanHostCodebase\
+.\tools\Decompile-GameCode.ps1     # game source and text catalogs, into HumanHostCodebase\
 .\tools\Get-ModEnvStatus.ps1       # check everything is in place
 ```
 
@@ -47,6 +48,8 @@ Copy `mods/HelloHost`, rename the folder and `.csproj`, update `AssemblyName`,
 | `tools/` | Setup, decompile and status scripts |
 | `docs/` | Environment notes |
 | `research/` | Findings about game code |
-| `HumanHostCodebase/` | Decompiled game code (local only, gitignored) |
+| `HumanHostCodebase/` | Decompiled source, serialized metadata, asset catalogs and loot views (local only, gitignored) |
 
-Decompiled code and game files are never committed.
+The generated reference has its own local Git history with no remote. Game source
+and extracted metadata never enter this workspace's commits or GitHub history.
+See [Game codebase](docs/GAME_CODEBASE.md) for generation, coverage and queries.
