@@ -13,6 +13,11 @@ secrets/
 # Decompiled game code. Copyrighted and machine-specific; regenerate with
 # tools/Decompile-GameCode.ps1. Never commit or push it.
 HumanHostCodebase/
+HumanHostCodebase.catalog-stage/
+HumanHostCodebase.catalog-backup/
+HumanHostCodebase.catalog-journal.json
+HumanHostCodebase.catalog-lock
+**/__pycache__/
 
 # Downloads and caches (BepInEx zips, tool packages)
 .cache/
