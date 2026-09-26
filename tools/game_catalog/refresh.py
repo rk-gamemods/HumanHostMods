@@ -54,7 +54,9 @@ def input_paths(game):
     for directory, subdirs, files in os.walk(data):
         if Path(directory) == data:
             subdirs[:] = sorted(d for d in subdirs if d.casefold() not in {"save", "modbrowser"})
-        paths.extend(Path(directory) / name for name in files)
+        paths.extend(Path(directory) / name for name in files
+                     if not name.lower().endswith(".log") and name.lower() != "output_log.txt"
+                     and not (name.lower().startswith("log-") and name.lower().endswith(".txt")))
     paths += [p for p in game.iterdir() if p.is_file() and p.suffix.lower() in {".dll", ".exe"}]
     return sorted(paths)
 

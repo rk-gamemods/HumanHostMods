@@ -51,7 +51,8 @@ gitignored, such as `HumanHostCodebase` or a path under `.local`.
 | `Catalog/coverage.json` | Object/type counts, omitted payload categories and decoding/reference gaps |
 | `Catalog/generator.json` | Parser/decompiler versions and generator hashes, normalizing CRLF to LF |
 
-The inventory excludes the game's `Save` and `ModBrowser` runtime directories.
+The inventory excludes the game's `Save` and `ModBrowser` runtime directories,
+`*.log`, `log-*.txt`, and `output_log.txt`, including Chromium's plugin log.
 Steam account state, playtime and download progress are excluded; build and depot
 identities are recorded separately so those transient fields do not create diffs.
 Native executable/module files and framework DLLs are inventoried. Their native

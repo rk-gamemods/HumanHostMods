@@ -373,7 +373,7 @@ class Catalog:
             "payload_types_cataloged_without_body": sorted(PAYLOAD_TYPES),
             "payload_scripts_cataloged_without_body": PAYLOAD_SCRIPTS,
             "unity_versions": self.versions,
-            "input_scope": "Installed player data, resources, streaming assets, managed/native modules and Steam manifest. Save and ModBrowser runtime directories are excluded.",
+            "input_scope": "Installed player data, resources, streaming assets and managed/native modules. Save, ModBrowser and runtime log files are excluded. Steam build/depot identities are recorded separately.",
             "identity_note": "Bundle name without content hash + serialized member ordinal + path ID. Path IDs can change across builds; Addressables GUIDs and container paths provide additional identity.",
         })
         from views import generate

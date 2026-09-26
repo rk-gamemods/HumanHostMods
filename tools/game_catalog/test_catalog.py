@@ -70,7 +70,8 @@ class DataTests(unittest.TestCase):
     def test_inventory_excludes_saves_and_runtime_mod_browser(self):
         with tempfile.TemporaryDirectory() as folder:
             game = Path(folder)
-            for name in ("Managed/Player.dll", "Save/private.json", "ModBrowser/user.json", "StreamingAssets/settings.json"):
+            for name in ("Managed/Player.dll", "Save/private.json", "ModBrowser/user.json", "StreamingAssets/settings.json",
+                         "Plugins/Vuplex/log-chromium.txt", "Plugins/engine.log", "output_log.txt"):
                 path = game / "Human Host_Data" / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("fixture")
