@@ -22,7 +22,7 @@ from addressables import decode, read_object
 from bundles import Bundle, MemberStream
 from catalog import Catalog, clean, source_key
 from snapshot import Snapshot, git
-from refresh import steam_identity, input_paths, tool_digest
+from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable
 from schemas import normalize_generated
 from UnityPy.helpers.TypeTreeNode import TypeTreeNode
 from UnityPy.helpers.TypeTreeHelper import read_typetree
@@ -54,6 +54,41 @@ class BundleTests(unittest.TestCase):
 
 
 class DataTests(unittest.TestCase):
+    def test_capture_reuse_requires_content_build_tool_and_full_scope_match(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder)
+            catalog = output / "Catalog"
+            catalog.mkdir()
+            steam, inputs, generator = {"build_id": "1"}, [{"path": "game.dll", "sha256": "a"}], {"tools": {"parser": "a"}}
+            for name, data in [("steam-build.json", steam), ("generator.json", generator), ("coverage.json", {"decode_failures": []})]:
+                (catalog / name).write_text(json.dumps(data))
+            (catalog / "inputs.jsonl").write_text(json.dumps(inputs[0]) + "\n")
+            (catalog / "assemblies.jsonl").write_text(json.dumps({"reason": "selected"}) + "\n")
+            self.assertTrue(reusable_capture(output, steam, inputs, generator))
+            self.assertFalse(reusable_capture(output, {"build_id": "2"}, inputs, generator))
+            self.assertFalse(reusable_capture(output, steam, [{"path": "game.dll", "sha256": "b"}], generator))
+            self.assertFalse(reusable_capture(output, steam, inputs, {"tools": {"parser": "b"}}))
+            (catalog / "assemblies.jsonl").write_text(json.dumps({"reason": "explicit assembly subset"}) + "\n")
+            self.assertFalse(reusable_capture(output, steam, inputs, generator))
+
+    def test_reuse_stability_rejects_new_and_changed_installed_inputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            game = Path(folder)
+            managed = game / "Human Host_Data" / "Managed"
+            managed.mkdir(parents=True)
+            path = managed / "Game.dll"
+            path.write_bytes(b"fixture")
+            paths = input_paths(game)
+            stamps = {p: (p.stat().st_size, p.stat().st_mtime_ns) for p in paths}
+            steam = steam_identity(game)
+            inputs_stable(game, paths, stamps, steam)
+            path.write_bytes(b"changed size")
+            with self.assertRaisesRegex(RuntimeError, "changed during generation"):
+                inputs_stable(game, paths, stamps, steam)
+            (managed / "Added.dll").write_bytes(b"new")
+            with self.assertRaisesRegex(RuntimeError, "input set changed"):
+                inputs_stable(game, paths, stamps, steam)
+
     def test_steam_playtime_does_not_change_build_identity(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)

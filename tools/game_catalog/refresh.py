@@ -119,6 +119,45 @@ def decompile(game, stage, names, workers):
     return manifest, sorted(embedded, key=lambda x: x["assembly"])
 
 
+def inputs_stable(game, paths, stamps, steam):
+    """Both a new capture and a reuse decision require the same stability gate."""
+    if paths != input_paths(game):
+        raise RuntimeError("Installed input set changed during generation; retry with stable inputs")
+    for path, stamp in stamps.items():
+        stat = path.stat()
+        if (stat.st_size, stat.st_mtime_ns) != stamp:
+            raise RuntimeError(f"Installed input changed during generation: {path}")
+    if steam != steam_identity(game):
+        raise RuntimeError("Installed Steam build changed during generation")
+
+
+def reusable_capture(output, steam, inputs, generator):
+    """Called under Snapshot's lock after its clean/local-only source checks.
+
+    Compare freshly hashed installed bytes and exact extraction implementation.
+    Filesystem timestamps alone never establish unchanged game content.
+    """
+    catalog = output / "Catalog"
+    required = ["steam-build.json", "inputs.jsonl", "generator.json", "coverage.json", "assemblies.jsonl"]
+    if not all((catalog / name).is_file() for name in required):
+        return False
+    old_steam = json.loads((catalog / "steam-build.json").read_text(encoding="utf-8"))
+    old_generator = json.loads((catalog / "generator.json").read_text(encoding="utf-8"))
+    if steam != old_steam or generator != old_generator:
+        return False
+    with (catalog / "inputs.jsonl").open(encoding="utf-8") as stream:
+        old_inputs = [json.loads(line) for line in stream]
+    if inputs != old_inputs:
+        return False
+    coverage = json.loads((catalog / "coverage.json").read_text(encoding="utf-8"))
+    if coverage.get("decode_failures"):
+        return False
+    with (catalog / "assemblies.jsonl").open(encoding="utf-8") as stream:
+        if any(row.get("reason") == "explicit assembly subset" for row in map(json.loads, stream)):
+            return False
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", required=True, type=Path)
@@ -157,10 +196,23 @@ def main():
         script_root = Path(__file__).resolve().parent
         tool_files = sorted(p for p in script_root.glob("*.py") if not p.name.startswith("test_")) + [script_root.parent / "Decompile-GameCode.ps1", script_root.parent / "Read-GameBundle.ps1", script_root / "requirements.txt"]
         tool_hashes = {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}
+        generator = {"schema": 1, "packages": versions, "python": sys.version.split()[0],
+                     "decompiler": decompiler, "tool_hash_normalization": "CRLF to LF", "tools": tool_hashes}
         steam = steam_identity(game)
         paths = input_paths(game)
         inputs, stamps = inventory(game, paths)
         build = steam["build_id"]
+        if not options.no_git and not options.assemblies and reusable_capture(output, steam, inputs, generator):
+            inputs_stable(game, paths, stamps, steam)
+            if tool_hashes != {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}:
+                raise RuntimeError("Generator source changed during input verification")
+            if snapshot.fingerprint() != snapshot.original_files:
+                raise RuntimeError("Source snapshot changed during input verification")
+            from snapshot import git
+            if git(output, "rev-parse", "HEAD").stdout.strip() != snapshot.state["head"] or git(output, "status", "--porcelain").stdout.strip():
+                raise RuntimeError("Source snapshot Git state changed during input verification")
+            print(f"Unchanged: verified installed hashes, Steam identity and generator; reusing {snapshot.state['head']}", flush=True)
+            return
         dump(stage / "Catalog" / "steam-build.json", steam)
         rows(stage / "Catalog" / "inputs.jsonl", inputs)
         loose_text = []
@@ -181,9 +233,7 @@ def main():
         assembly_manifest, resources = decompile(game, stage, options.assemblies, options.workers)
         rows(stage / "Catalog" / "assemblies.jsonl", assembly_manifest)
         rows(stage / "Catalog" / "embedded-resources.jsonl", resources)
-        dump(stage / "Catalog" / "generator.json", {"schema": 1, "packages": versions,
-             "python": sys.version.split()[0], "decompiler": decompiler,
-             "tool_hash_normalization": "CRLF to LF", "tools": tool_hashes})
+        dump(stage / "Catalog" / "generator.json", generator)
         (stage / "BUILD_INFO.md").write_text(
             f"# Human Host text reference\n\nSteam build ID: {build}\n\n"
             f"Decompiled assemblies: {sum(a['decompiled'] for a in assembly_manifest)}\n\n"
@@ -197,14 +247,7 @@ def main():
         for path in stage.rglob("*"):
             if path.is_file() and path.name != ".gitignore" and path.suffix not in {".cs", ".json", ".jsonl", ".md", ".txt"}:
                 raise RuntimeError(f"Unexpected non-text output: {path}")
-        if paths != input_paths(game):
-            raise RuntimeError("Installed input set changed during generation; retry with stable inputs")
-        for path, stamp in stamps.items():
-            stat = path.stat()
-            if (stat.st_size, stat.st_mtime_ns) != stamp:
-                raise RuntimeError(f"Installed input changed during generation: {path}")
-        if steam != steam_identity(game):
-            raise RuntimeError("Installed Steam build changed during generation")
+        inputs_stable(game, paths, stamps, steam)
         if tool_hashes != {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}:
             raise RuntimeError("Generator source changed during generation; retry with stable tools")
         snapshot.publish(f"Human Host build {build}: source and text catalog")

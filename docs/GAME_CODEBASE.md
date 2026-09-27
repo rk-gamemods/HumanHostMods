@@ -135,7 +135,11 @@ git -C HumanHostCodebase diff HEAD~1 -- Catalog/views/loot-tags.jsonl
 ```
 
 An unchanged-input repeat must leave the snapshot's Git HEAD and working tree
-unchanged. Changes to parser versions or generator source intentionally change
+unchanged. Refresh hashes the installed inputs and compares the Steam identity,
+parser/decompiler versions and generator hashes before export. An exact match
+reuses the clean full snapshot, skipping catalog decoding and assembly decompilation.
+The stability checks still run; partial assembly captures are not reusable full
+snapshots. Changes to parser versions or generator source intentionally change
 `Catalog/generator.json`. The local unit tests exercise binary omission,
 Addressables decoding, lazy bundle reads, reference ambiguity, writer locking,
 rollback, dirty-state preservation and repeat publication.
