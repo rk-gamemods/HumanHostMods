@@ -42,11 +42,50 @@ def rows(path, values, locations=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as handle:
         for value in values:
-            data = (json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n").encode("utf-8", errors="backslashreplace")
             if locations is not None and value.get("script"):
-                locations[value["id"]] = {"offset": handle.tell(), "bytes": len(data),
-                                          "sha256": hashlib.sha256(data).hexdigest()}
-            handle.write(data)
+                locations[value["id"]] = indexed_row(handle, value)
+            else:
+                handle.write(encoded(value) + b"\n")
+
+
+def encoded(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8", errors="backslashreplace")
+
+
+def indexed_row(handle, value):
+    """Write canonical JSON once; index large records by named member sizes.
+
+    The index describes every member, including unknown future fields. It carries
+    no wiki selection policy and creates no second raw record or field-value copy.
+    """
+    start, sha = handle.tell(), hashlib.sha256()
+
+    def emit(data):
+        handle.write(data)
+        sha.update(data)
+
+    def members(obj, split_fields=False):
+        sizes = {}
+        emit(b"{")
+        for index, key in enumerate(sorted(obj)):
+            if index:
+                emit(b", ")
+            emit(encoded(key) + b": ")
+            if split_fields and key == "fields" and isinstance(obj[key], dict):
+                sizes[key] = members(obj[key])
+            else:
+                data = encoded(obj[key])
+                emit(data)
+                sizes[key] = len(data)
+        emit(b"}")
+        return sizes
+
+    sizes = members(value, split_fields=True)
+    emit(b"\n")
+    location = {"offset": start, "bytes": handle.tell() - start, "sha256": sha.hexdigest()}
+    if location["bytes"] >= 1024 * 1024:
+        location["members"] = sizes
+    return location
 
 
 def clean(value):

@@ -55,6 +55,26 @@ class BundleTests(unittest.TestCase):
 
 
 class DataTests(unittest.TestCase):
+    def test_large_component_member_index_preserves_canonical_bytes_and_all_names(self):
+        import hashlib
+        value = {"id": "a#1", "script": {"class": "Fixture"},
+                 "fields": {"日本語": 4, "geometry": [{"x": 1, "y": 2}] * 65000,
+                            "future": {"value": 7}}, "references": []}
+        expected = (json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n").encode()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "records.jsonl"
+            locations = {}
+            rows(path, [value], locations)
+            data = path.read_bytes()
+            self.assertEqual(expected, data)
+            location = locations["a#1"]
+            self.assertEqual(hashlib.sha256(data).hexdigest(), location["sha256"])
+            members = location["members"]
+            self.assertEqual(set(value), set(members))
+            self.assertEqual(set(value["fields"]), set(members["fields"]))
+            for key, size in members["fields"].items():
+                self.assertEqual(len(json.dumps(value["fields"][key], ensure_ascii=False, sort_keys=True).encode()), size)
+
     def test_component_locations_are_byte_exact_without_duplicate_records(self):
         import hashlib
         with tempfile.TemporaryDirectory() as folder:

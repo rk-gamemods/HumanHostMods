@@ -68,6 +68,16 @@ gitignored, such as `HumanHostCodebase` or a path under `.local`.
 | `Catalog/coverage.json` | Object/type counts, omitted payload categories and decoding/reference gaps |
 | `Catalog/generator.json` | Parser/decompiler versions and generator hashes, normalizing CRLF to LF |
 
+Script records have verified byte offsets, sizes and SHA-256 hashes in the object
+index. Records of at least 1 MiB also carry a `members` map: each top-level name
+maps to its encoded JSON value size; `fields` maps every field name to its value
+size. Names and sizes describe the complete record, including fields that a wiki
+adapter does not select. Values stay in the original object shard. The producer
+writes the same sorted, space-separated UTF-8 JSON bytes as before, with LF endings.
+Readers can hash skipped values in bounded chunks and decode selected fields.
+They must verify the record hash, member names/boundaries and total byte coverage
+before accepting a projected record. Older indexes remain valid without this map.
+
 The inventory excludes the game's `Save` and `ModBrowser` runtime directories,
 `*.log`, `log-*.txt`, and `output_log.txt`, including Chromium's plugin log.
 Steam account state, playtime and download progress are excluded; build and depot
