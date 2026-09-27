@@ -38,11 +38,15 @@ def dump(path, value):
                                allow_nan=False) + "\n", encoding="utf-8", errors="backslashreplace")
 
 
-def rows(path, values):
+def rows(path, values, locations=None):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", errors="backslashreplace", newline="\n") as handle:
+    with path.open("wb") as handle:
         for value in values:
-            handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n")
+            data = (json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n").encode("utf-8", errors="backslashreplace")
+            if locations is not None and value.get("script"):
+                locations[value["id"]] = {"offset": handle.tell(), "bytes": len(data),
+                                          "sha256": hashlib.sha256(data).hexdigest()}
+            handle.write(data)
 
 
 def clean(value):
@@ -341,6 +345,7 @@ class Catalog:
         print(f"[catalog] {len(self.files)} serialized files; {len(self.objects)} objects", flush=True)
         self.prepare()
         object_types, script_types = collections.Counter(), collections.Counter()
+        locations = {}
         for index, (key, info) in enumerate(sorted(self.files.items()), 1):
             print(f"[catalog metadata {index}/{len(self.files)}] {key}", flush=True)
             output = []
@@ -354,7 +359,7 @@ class Catalog:
                     script_types[record["script"]["class"]] += 1
             # The readable source name is retained, rather than a hash-only output filename.
             relative = key.replace("::", "/") + ".jsonl"
-            rows(self.destination / "objects" / relative, output)
+            rows(self.destination / "objects" / relative, output, locations)
         rows(self.destination / "addressables.jsonl", self.addressables)
         rows(self.destination / "references.jsonl", ({"source": identity, **ref}
              for identity, record in sorted(self.records.items()) for ref in record.get("references", [])))
@@ -377,7 +382,7 @@ class Catalog:
             "identity_note": "Bundle name without content hash + serialized member ordinal + path ID. Path IDs can change across builds; Addressables GUIDs and container paths provide additional identity.",
         })
         from views import generate
-        generate(self.destination, self.records, self.addressables, self.containers)
+        generate(self.destination, self.records, self.addressables, self.containers, locations)
         for stream in self.streams:
             stream.close()
         return self.failures

@@ -20,7 +20,7 @@ if options.python_packages:
 
 from addressables import decode, read_object
 from bundles import Bundle, MemberStream
-from catalog import Catalog, clean, source_key
+from catalog import Catalog, clean, source_key, rows
 from snapshot import Snapshot, git
 from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable
 from schemas import normalize_generated
@@ -54,6 +54,25 @@ class BundleTests(unittest.TestCase):
 
 
 class DataTests(unittest.TestCase):
+    def test_component_locations_are_byte_exact_without_duplicate_records(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "records.jsonl"
+            values = [{"id": "a#1", "name": "日本語", "script": {"class": "Fixture"}},
+                      {"id": "a#2", "name": "engine object"},
+                      {"id": "a#3", "script": {"class": "Other"}, "fields": {"x": 4}}]
+            locations = {}
+            rows(path, values, locations)
+            self.assertEqual({"a#1", "a#3"}, set(locations))
+            with path.open("rb") as stream:
+                for value in [values[0], values[2]]:
+                    location = locations[value["id"]]
+                    stream.seek(location["offset"])
+                    data = stream.read(location["bytes"])
+                    self.assertEqual(value, json.loads(data))
+                    self.assertEqual(location["sha256"], hashlib.sha256(data).hexdigest())
+            self.assertNotIn(b"\r", path.read_bytes())
+
     def test_capture_reuse_requires_content_build_tool_and_full_scope_match(self):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder)
