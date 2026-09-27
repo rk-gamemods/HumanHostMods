@@ -26,8 +26,10 @@ After a successful full capture, the command runs the independent
 also follows this handoff. The wiki reads selected facts and evidence in place;
 raw code and whole catalogs are not copied into wiki content. Supported wiki work
 finishes before the operator receives its grouped unresolved-content report.
-Execution failures are reported separately. The current wiki implementation ends
-at a coordinated local Git release; public deployment remains unfinished.
+Execution failures are reported separately. The configured wiki now creates a
+coordinated Git release and publishes supported content to GitHub Pages, verifying
+topic sites before advancing the hub. Gameplay coverage and verification remain
+incomplete and are labeled in the reader.
 See [wiki workflow](../HumanHostWiki/docs/WORKFLOW.md).
 
 Use `-WikiPath` for another configured wiki umbrella. `-SkipWiki` explicitly runs
