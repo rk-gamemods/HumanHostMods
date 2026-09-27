@@ -25,6 +25,7 @@ Human Host rules.
 | Repository | Local location and scope |
 | --- | --- |
 | HumanHostMods | This private multi-mod workspace. Contains shared tools, local research and development material. It is not the public Expanded Hordes repository. |
+| HumanHostWiki | Independent local umbrella at `HumanHostWiki/`, ignored by this repository. Owns the wiki ADR, repository registry, contracts and shared tooling. Read its `AGENTS.md` before wiki work. |
 | [HumanHost-ExpandedHordes](https://github.com/rk-gamemods/HumanHost-ExpandedHordes) | Standalone public mod repository at `C:/Users/Admin/Documents/GIT/GameMods/HumanHost-ExpandedHordes`. See its [README](../HumanHost-ExpandedHordes/README.md) and [build instructions](../HumanHost-ExpandedHordes/docs/BUILDING.md). MIT licensed; pre-testing alpha with no guarantee of function. |
 
 Publish Expanded Hordes source from its standalone repository only. Keep this

@@ -17,6 +17,7 @@ HumanHostCodebase.catalog-stage/
 HumanHostCodebase.catalog-backup/
 HumanHostCodebase.catalog-journal.json
 HumanHostCodebase.catalog-lock
+HumanHostWiki/
 **/__pycache__/
 
 # Downloads and caches (BepInEx zips, tool packages)
