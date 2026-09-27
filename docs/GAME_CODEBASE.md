@@ -27,7 +27,7 @@ also follows this handoff. The wiki reads selected facts and evidence in place;
 raw code and whole catalogs are not copied into wiki content. Supported wiki work
 finishes before the operator receives its grouped unresolved-content report.
 Execution failures are reported separately. The current wiki implementation ends
-at a local reader candidate; coordinated public release remains unfinished.
+at a coordinated local Git release; public deployment remains unfinished.
 See [wiki workflow](../HumanHostWiki/docs/WORKFLOW.md).
 
 Use `-WikiPath` for another configured wiki umbrella. `-SkipWiki` explicitly runs
