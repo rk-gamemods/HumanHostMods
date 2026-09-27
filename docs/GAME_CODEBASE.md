@@ -52,6 +52,7 @@ gitignored, such as `HumanHostCodebase` or a path under `.local`.
 | `<assembly>/*.cs` | C# from game and package assemblies, with shipped PDB variable names where available |
 | `Catalog/inputs.jsonl` | Input paths, sizes, SHA-256 hashes and categories |
 | `Catalog/steam-build.json` | Steam build, branch and installed depot manifest identities, without playtime or account state |
+| `Catalog/game-version.json` | Captured application version from `PlayerSettings.bundleVersion`, or an explicit unknown reason; includes input hash and object/field evidence |
 | `Catalog/assemblies.jsonl` | Every managed DLL, decompilation status and exclusion reason |
 | `Catalog/embedded-resources.jsonl` | Names of resources embedded in selected assemblies; resource bodies are not extracted |
 | `Catalog/serialized-files.jsonl` | Original bundle/member paths, Unity versions, external dependencies and object counts |
@@ -74,6 +75,25 @@ identities are recorded separately so those transient fields do not create diffs
 Native executable/module files and framework DLLs are inventoried. Their native
 implementations are not reconstructed as C#. The assembly manifest explicitly
 identifies framework exclusions.
+
+`tools/game_catalog/game_version.py` selects the unique captured `PlayerSettings`
+object's `bundleVersion`. Unity documents this as the value of
+[Application.version](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/Application-version.html).
+Missing, ambiguous or invalid settings record an unknown version. Input evidence
+must resolve to the normal hash inventory. No executable-version fallback is used:
+the installed `Human Host.exe` product version identifies the Unity engine.
+The wiki consumes this small record from new source commits; it does not backfill
+version claims into older immutable snapshot receipts.
+
+After a capture, independently audit that field against the catalog and installed
+input bytes with:
+
+```powershell
+py -3 tools/check_game_version.py --source HumanHostCodebase --game 'C:/Steam/steamapps/common/Human Host'
+```
+
+This checks a recorded version; unknown versions remain an explicit gap and do
+not satisfy that audit. The check never modifies installed files.
 
 ## Reading loot data
 

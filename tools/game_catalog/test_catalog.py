@@ -24,6 +24,7 @@ from catalog import Catalog, clean, source_key, rows
 from snapshot import Snapshot, git
 from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable
 from schemas import normalize_generated
+from game_version import capture as capture_version
 from UnityPy.helpers.TypeTreeNode import TypeTreeNode
 from UnityPy.helpers.TypeTreeHelper import read_typetree
 from UnityPy.streams import EndianBinaryReader
@@ -79,7 +80,8 @@ class DataTests(unittest.TestCase):
             catalog = output / "Catalog"
             catalog.mkdir()
             steam, inputs, generator = {"build_id": "1"}, [{"path": "game.dll", "sha256": "a"}], {"tools": {"parser": "a"}}
-            for name, data in [("steam-build.json", steam), ("generator.json", generator), ("coverage.json", {"decode_failures": []})]:
+            for name, data in [("steam-build.json", steam), ("generator.json", generator), ("coverage.json", {"decode_failures": []}),
+                               ("game-version.json", {"schema": 1, "status": "unknown", "version": None, "evidence": []})]:
                 (catalog / name).write_text(json.dumps(data))
             (catalog / "inputs.jsonl").write_text(json.dumps(inputs[0]) + "\n")
             (catalog / "assemblies.jsonl").write_text(json.dumps({"reason": "selected"}) + "\n")
@@ -89,6 +91,25 @@ class DataTests(unittest.TestCase):
             self.assertFalse(reusable_capture(output, steam, inputs, {"tools": {"parser": "b"}}))
             (catalog / "assemblies.jsonl").write_text(json.dumps({"reason": "explicit assembly subset"}) + "\n")
             self.assertFalse(reusable_capture(output, steam, inputs, generator))
+
+    def test_application_version_selects_only_player_settings_with_input_evidence(self):
+        records = [{"id": "globalgamemanagers#1", "type": "PlayerSettings", "fields": {"bundleVersion": "0.8.315"}},
+                   {"id": "other#2", "type": "MonoBehaviour", "fields": {"bundleVersion": "wrong"}}]
+        inputs = [{"path": "Human Host_Data/globalgamemanagers", "sha256": "a" * 64}]
+        sources = {"globalgamemanagers": "globalgamemanagers"}
+        result = capture_version(iter(records), sources, inputs)
+        self.assertEqual(result["version"], "0.8.315")
+        self.assertEqual(result["evidence"], [{"source_path": inputs[0]["path"], "source_sha256": "a" * 64,
+                                             "object_id": "globalgamemanagers#1", "field": "/bundleVersion"}])
+        self.assertEqual(result, capture_version(reversed(records), sources, inputs))
+        self.assertEqual(capture_version([], sources, inputs)["reason"], "missing-player-settings")
+        self.assertEqual(capture_version(records + [records[0]], sources, inputs)["reason"], "ambiguous-player-settings")
+        for invalid in (None, "", 315, " version ", "line\nbreak", "x" * 129):
+            records[0]["fields"]["bundleVersion"] = invalid
+            self.assertIsNone(capture_version(records, sources, inputs)["version"])
+        records[0]["fields"]["bundleVersion"] = "0.8.315"
+        with self.assertRaisesRegex(ValueError, "inventory"):
+            capture_version(records, sources, [])
 
     def test_reuse_stability_rejects_new_and_changed_installed_inputs(self):
         with tempfile.TemporaryDirectory() as folder:

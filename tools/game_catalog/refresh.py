@@ -138,7 +138,7 @@ def reusable_capture(output, steam, inputs, generator):
     Filesystem timestamps alone never establish unchanged game content.
     """
     catalog = output / "Catalog"
-    required = ["steam-build.json", "inputs.jsonl", "generator.json", "coverage.json", "assemblies.jsonl"]
+    required = ["steam-build.json", "inputs.jsonl", "generator.json", "coverage.json", "assemblies.jsonl", "game-version.json"]
     if not all((catalog / name).is_file() for name in required):
         return False
     old_steam = json.loads((catalog / "steam-build.json").read_text(encoding="utf-8"))
@@ -230,12 +230,17 @@ def main():
         failures = catalog.export()
         if failures:
             raise RuntimeError(f"Catalog has {len(failures)} decoding failures; previous snapshot preserved.\n" + json.dumps(failures[:20], indent=2))
+        from game_version import capture
+        version = capture(catalog.records.values(), {key: info["source"] for key, info in catalog.files.items()}, inputs)
+        dump(stage / "Catalog" / "game-version.json", version)
+        print(f"[game version] {version['version'] or version['reason']}", flush=True)
         assembly_manifest, resources = decompile(game, stage, options.assemblies, options.workers)
         rows(stage / "Catalog" / "assemblies.jsonl", assembly_manifest)
         rows(stage / "Catalog" / "embedded-resources.jsonl", resources)
         dump(stage / "Catalog" / "generator.json", generator)
         (stage / "BUILD_INFO.md").write_text(
             f"# Human Host text reference\n\nSteam build ID: {build}\n\n"
+            f"Application version: {version['version'] or 'unknown'} (Catalog/game-version.json)\n\n"
             f"Decompiled assemblies: {sum(a['decompiled'] for a in assembly_manifest)}\n\n"
             f"Assembly scope: {'explicit subset' if options.assemblies else 'all non-framework managed assemblies'}\n\n"
             "Catalog/ contains serialized gameplay fields, object identities, source hashes, reference resolution, and generated views.\n"
