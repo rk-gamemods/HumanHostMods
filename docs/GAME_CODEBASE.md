@@ -21,6 +21,20 @@ uses that setting before `.cache/catalog-python`. It does not install packages
 or change the game installation. Avoid refreshing while Steam is modifying the
 game files. Input changes detected during generation abort publication.
 
+After a successful full capture, the command runs the independent
+`HumanHostWiki/wiki.py update --operator-report` entrypoint. An unchanged capture
+also follows this handoff. The wiki reads selected facts and evidence in place;
+raw code and whole catalogs are not copied into wiki content. Supported wiki work
+finishes before the operator receives its grouped unresolved-content report.
+Execution failures are reported separately. The current wiki implementation ends
+at a local reader candidate; coordinated public release remains unfinished.
+See [wiki workflow](../HumanHostWiki/docs/WORKFLOW.md).
+
+Use `-WikiPath` for another configured wiki umbrella. `-SkipWiki` explicitly runs
+source-only diagnostics. Partial `-Assemblies` and `-NoGit` exports skip the wiki
+because they cannot provide its full committed input contract. A missing wiki
+entrypoint after normal capture is reported as an execution failure.
+
 `-All` remains accepted; all non-framework managed assemblies are now the
 default. `-Assemblies Player,UI` requires a new `-OutputPath` and marks its
 assembly coverage as partial. It cannot overwrite the normal full snapshot.
