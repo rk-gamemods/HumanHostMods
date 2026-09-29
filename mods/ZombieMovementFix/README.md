@@ -3,14 +3,14 @@
 An automatic workaround for living zombies whose movement controllers are
 disabled while their physics bodies remain active. It targets the state found
 in the affected slot 1 session. It attempts both recovery of affected zombies
-already present and correction of new occurrences. **In-game verification is
-pending.**
+already present and correction of new occurrences. **The user reports that the
+recovery stopped the visible flyers; its log records 57 successful repairs.**
 
 Load the save and play normally. No hotkey is required. HHMM's local-mod entry
 uses the DLL name **Human Host - Zombie Movement Fix**. This is separate from
 [Admin Panel - Fly Mode Fix](../AdminPanelFlyModeFix/README.md), which patches
-two confirmed Admin Panel bugs. The trigger for disabled zombie movement has
-not yet been established, so this workaround is not attributed to that mod.
+two confirmed Admin Panel bugs. Subsequent investigation established a separate
+death/pool ordering failure; see [the investigation](../../research/zombie-death-recycling.md).
 
 ## What the evidence establishes
 
@@ -30,11 +30,13 @@ selected none of the ten recorded failures. Replaying those rows through the
 new missing-movement detector recognizes all ten. Ownership, corpse cleanup
 and landing checks still require live validation.
 
-Death cleanup and reuse of disabled pooled objects remain possible triggers.
-The inspected horde spawn path does not explicitly re-enable an existing
-controller, unlike ordinary NPC spawning. That is a source finding, not proof
-that it caused this session's failures. No save corruption or particular mod
-interaction has been established.
+The successful playtest establishes the ordering for all 57 repairs: native
+cleanup enabled the pooled controller, the still-running death callback disabled
+it again, and the horde later reused it disabled. Same-frame death bursts exceed
+the separate four-pending-ragdoll limit. The settled-corpse setting does not
+control that limit. The weapon causing each burst remains unknown; no save
+corruption has been established. Expanded Hordes 0.2.1 adds prevention for this
+specific ordering. This plugin remains the recovery fallback during verification.
 
 ## Repair limits
 
