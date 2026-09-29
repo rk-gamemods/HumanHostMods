@@ -2,5 +2,6 @@
   <Folder Name="/mods/">
     <Project Path="mods/ExpandedHordes/ExpandedHordes.csproj" />
     <Project Path="mods/HelloHost/HelloHost.csproj" />
+    <Project Path="mods/ZombieRecovery/ZombieRecovery.csproj" />
   </Folder>
 </Solution>

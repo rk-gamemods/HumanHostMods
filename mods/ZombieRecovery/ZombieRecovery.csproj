@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsHumanHostMod>true</IsHumanHostMod>
+    <AssemblyName>ZombieRecovery</AssemblyName>
+    <RootNamespace>ZombieRecovery</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <HumanHostRef Include="Creature" />
+    <HumanHostRef Include="Player" />
+    <HumanHostRef Include="AI" />
+    <HumanHostRef Include="Terrain" />
+    <HumanHostRef Include="G_Save" />
+    <HumanHostRef Include="UnityEngine.PhysicsModule" />
+    <HumanHostRef Include="UnityEngine.InputLegacyModule" />
+    <HumanHostRef Include="UnityEngine.JSONSerializeModule" />
+  </ItemGroup>
+</Project>

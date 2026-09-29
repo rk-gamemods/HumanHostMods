@@ -1,0 +1,80 @@
+# Zombie Recovery
+
+Local compatibility guard and opt-in recovery tool for Human Host 0.8.316.
+It corrects two Admin Panel 1.1.9 patches that affect all creature controllers
+when the player enables Fly Mode. Existing airborne zombies need separate
+diagnosis: that fly flag is not serialized, and turning it off resumes gravity
+in the isolated controller reproduction. The guard alone does not establish
+the cause of a problem that survives restarting the game.
+
+## Compatibility boundary
+
+The guard requires both version 1.1.9 and SHA-256
+`a2b02ef182a1c1e88aa591ada1fc87adfb3e3b0a02ce6336328e0a246de0ac6d`.
+It verifies the original two Harmony registrations, preserves their priority
+and before/after metadata, and replaces only those registrations with wrappers
+that call the original Admin Panel methods for player controllers. Other NPCs
+retain the game result and normal input. Other mods' patches remain registered.
+
+Installation is idempotent within the plugin instance. Failure rolls back the
+registrations, and unloading restores the original registrations. An updated
+or otherwise changed Admin Panel DLL is left untouched, even if its version
+number did not change. This deliberately avoids applying today's workaround
+to a future upstream correction. It does not guarantee compatibility with
+every other mod's patch ordering.
+
+No third-party files or configuration are edited. Removing this plugin while
+the game is closed removes the guard on the next launch.
+
+## Diagnostics and recovery
+
+Reports are written to `BepInEx/plugins/ZombieRecovery/diagnostics/latest.json`.
+Press **Ctrl+Shift+F8** to request a fresh report. Recovery starts disabled on
+each session and save change. **Ctrl+Shift+F9** enables a 120-game-second pass;
+repeating the shortcut during that pass does not restart it.
+
+A zombie must be alive, upright, non-ragdoll, using active registered dynamic
+physics, and at least eight metres above a raycast-confirmed surface. Its
+height and vertical velocity must remain nearly stationary for six game
+seconds. Pauses, streaming gaps, save changes and world-origin shifts cannot
+accumulate that observation. Missing terrain, falling zombies and unsuitable
+surfaces are excluded. Ground placement requires a clear capsule and support
+across the footprint.
+
+Recovery moves only vertically, clears motion, updates the anti-fall anchor
+and fall-height baseline, and refreshes mover rays. It preserves health and
+inventory. A journal record must be written before changing the zombie.
+Grounded zombies no longer qualify on subsequent passes. Normal game saving
+persists recovered positions; this plugin does not rewrite save files.
+
+Back up the entire save and autosave before recovery. The detector is
+conservative and cannot recover every possible cause of an airborne zombie.
+Reports and journal entries are local diagnostics, not suitable for commits.
+
+## Inspected game members
+
+Verified against the 0.8.316 decompilation before implementation:
+
+- `C_Controller_Base.DetermineControllerState`, `Input_WSAD`, `MyFixedUpdate`
+  and `HandleMomentum`: shared player/NPC movement and gravity.
+- `C_Controller_Base.Anti_Fallen_Into_EmptyAir_NPC`, `Sync_AntiFall_Anchor`:
+  recovery anchor and periodic NPC fallback.
+- `Creature_Mgr.Raycast_FixedUpdate`: controller registration and ground tests.
+- `CMF.Mover.Reset_Rays`: rebuild ground probes after repositioning.
+- `NPC_Horde_Mgr._Restore_Horde_NPCs`, `Save_Horde_Data_To_Disk`: saved world
+  positions and their restoration.
+- Admin Panel `Plugin.DetermineControllerState_Postfix` and
+  `Plugin.Input_WSAD_Prefix`: the two unscoped Fly Mode patches.
+
+## Build and checks
+
+```powershell
+dotnet run --project tests/ZombieRecovery.Checks -c Release
+dotnet build HumanHostMods.slnx -c Release
+# Only while the game is closed:
+dotnet build mods/ZombieRecovery -c Release -p:DeployToGame=true
+```
+
+The isolated checks cover production decision rules, not Unity terrain or
+Harmony dispatch. Runtime validation must confirm the two replacements in the
+BepInEx log and compare live diagnostics before and after any recovery.
