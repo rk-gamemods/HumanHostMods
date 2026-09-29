@@ -26,6 +26,7 @@ namespace AdminPanelFlyModeFix
         private float since = -1f;
         private float previousTime = -1f;
         private float initialHeight;
+        internal string Reason { get; private set; } = "not observed";
 
         internal bool Observe(float time, float worldHeight, float clearance, float verticalSpeed, bool eligible)
         {
@@ -33,6 +34,9 @@ namespace AdminPanelFlyModeFix
                 || clearance < MinimumClearance || Math.Abs(verticalSpeed) > 0.35f)
             {
                 Reset();
+                Reason = !eligible ? "excluded by controller/ground state"
+                    : !Finite(time) || !Finite(worldHeight) || !Finite(clearance) || !Finite(verticalSpeed) ? "non-finite measurement"
+                    : clearance < MinimumClearance ? "less than eight metres above ground" : "moving vertically";
                 return false;
             }
             if (since < 0f || time < previousTime || time - previousTime > 1.5f || Math.Abs(worldHeight - initialHeight) > 0.35f)
@@ -41,6 +45,7 @@ namespace AdminPanelFlyModeFix
                 initialHeight = worldHeight;
             }
             previousTime = time;
+            Reason = time - since >= RequiredSeconds ? "stable hover qualified" : "waiting for six seconds at a stable height";
             return time - since >= RequiredSeconds;
         }
 

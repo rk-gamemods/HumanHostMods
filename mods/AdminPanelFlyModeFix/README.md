@@ -38,6 +38,15 @@ the game is closed removes the guard on the next launch.
 ## Diagnostics and recovery
 
 Reports are written to `BepInEx/plugins/Admin Panel - Fly Mode Fix/diagnostics/latest.json`.
+Version 0.1.2 fixes a diagnostic defect in 0.1.1: the old serializer wrote totals
+but omitted the per-zombie rows. Reports now use plain data contracts and verify
+the row count before publication. A rolling history retains successive snapshots
+(two files of roughly 8 MiB each). Read-only movement and anti-fall probes record
+controller calls and repositioning, while each row reports why repair excludes
+that zombie and where its physics body and visible model are located. These
+probes do not change movement. The persistent floating-zombie cause remains
+unconfirmed until a report from the affected game session supplies that evidence.
+
 Press **Ctrl+Shift+F8** to request a fresh report. Recovery starts disabled on
 each session and save change. **Ctrl+Shift+F9** enables a 120-game-second pass;
 repeating the shortcut during that pass does not restart it.

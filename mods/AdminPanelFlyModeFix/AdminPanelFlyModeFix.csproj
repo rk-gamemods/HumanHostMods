@@ -3,7 +3,7 @@
     <IsHumanHostMod>true</IsHumanHostMod>
     <AssemblyName>Admin Panel - Fly Mode Fix</AssemblyName>
     <RootNamespace>AdminPanelFlyModeFix</RootNamespace>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
   </PropertyGroup>
   <ItemGroup>
     <HumanHostRef Include="Creature" />
@@ -13,6 +13,5 @@
     <HumanHostRef Include="G_Save" />
     <HumanHostRef Include="UnityEngine.PhysicsModule" />
     <HumanHostRef Include="UnityEngine.InputLegacyModule" />
-    <HumanHostRef Include="UnityEngine.JSONSerializeModule" />
   </ItemGroup>
 </Project>

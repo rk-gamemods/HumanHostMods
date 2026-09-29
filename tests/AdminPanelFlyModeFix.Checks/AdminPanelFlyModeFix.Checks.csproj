@@ -2,8 +2,11 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
+    <!-- Linked diagnostic DTO fields are populated by the game plugin, which this isolated check project omits. -->
+    <NoWarn>$(NoWarn);CS0649</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../mods/AdminPanelFlyModeFix/RecoveryRules.cs" Link="RecoveryRules.cs" />
+    <Compile Include="../../mods/AdminPanelFlyModeFix/Diagnostics.cs" Link="Diagnostics.cs" />
   </ItemGroup>
 </Project>
