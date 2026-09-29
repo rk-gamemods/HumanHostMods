@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsHumanHostMod>true</IsHumanHostMod>
-    <AssemblyName>ZombieRecovery</AssemblyName>
-    <RootNamespace>ZombieRecovery</RootNamespace>
-    <Version>0.1.0</Version>
+    <AssemblyName>Admin Panel - Fly Mode Fix</AssemblyName>
+    <RootNamespace>AdminPanelFlyModeFix</RootNamespace>
+    <Version>0.1.1</Version>
   </PropertyGroup>
   <ItemGroup>
     <HumanHostRef Include="Creature" />

@@ -7,7 +7,7 @@ using BepInEx.Bootstrap;
 using BepInEx.Logging;
 using HarmonyLib;
 
-namespace ZombieRecovery
+namespace AdminPanelFlyModeFix
 {
     internal sealed class AdminPanelCompatibility
     {

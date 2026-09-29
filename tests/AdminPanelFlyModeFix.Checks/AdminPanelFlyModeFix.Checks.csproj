@@ -4,6 +4,6 @@
     <TargetFramework>net8.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../mods/ZombieRecovery/RecoveryRules.cs" Link="RecoveryRules.cs" />
+    <Compile Include="../../mods/AdminPanelFlyModeFix/RecoveryRules.cs" Link="RecoveryRules.cs" />
   </ItemGroup>
 </Project>

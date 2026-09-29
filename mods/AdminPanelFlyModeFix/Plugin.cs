@@ -6,12 +6,13 @@ using BepInEx;
 using HarmonyLib;
 using UnityEngine;
 
-namespace ZombieRecovery
+namespace AdminPanelFlyModeFix
 {
-    [BepInPlugin(Guid, "Zombie Recovery", "0.1.0")]
+    [BepInPlugin(Guid, "Admin Panel - Fly Mode Fix", "0.1.1")]
     [BepInDependency(AdminPanelCompatibility.AdminOwner, BepInDependency.DependencyFlags.SoftDependency)]
     public sealed class Plugin : BaseUnityPlugin
     {
+        // Retain the original GUID across the display/assembly rename.
         public const string Guid = "rkgamemods.humanhost.zombierecovery";
         private readonly Dictionary<Zombie_Input, HoverObservation> observations = new Dictionary<Zombie_Input, HoverObservation>();
         private Harmony harmony;
@@ -45,7 +46,7 @@ namespace ZombieRecovery
 
         private void Awake()
         {
-            output = Path.Combine(Paths.PluginPath, "ZombieRecovery", "diagnostics");
+            output = Path.Combine(Paths.PluginPath, "Admin Panel - Fly Mode Fix", "diagnostics");
             Directory.CreateDirectory(output);
             harmony = new Harmony(Guid);
             compatibility = new AdminPanelCompatibility(harmony, Logger);
@@ -56,7 +57,7 @@ namespace ZombieRecovery
             }
             catch (Exception ex) { Logger.LogError("Compatibility guard could not be installed: " + ex); }
             runtimeReady = Application.version == "0.8.316";
-            Logger.LogInfo($"Zombie Recovery 0.1.0 loaded | game {Application.version} | recovery support={runtimeReady}. Ctrl+Shift+F8: report; Ctrl+Shift+F9: recover proven hovering zombies for 120 seconds. Recovery starts OFF.");
+            Logger.LogInfo($"Admin Panel - Fly Mode Fix 0.1.1 loaded | game {Application.version} | recovery support={runtimeReady}. Automatic Admin Panel patch; Ctrl+Shift+F8: report; Ctrl+Shift+F9: attempt repair of stuck floating zombies for 120 seconds. Manual repair starts OFF.");
         }
 
         private void Update()

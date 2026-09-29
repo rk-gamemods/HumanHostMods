@@ -1,6 +1,6 @@
 using System;
 
-namespace ZombieRecovery
+namespace AdminPanelFlyModeFix
 {
     internal static class GuardRules
     {

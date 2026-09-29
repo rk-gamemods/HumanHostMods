@@ -1,5 +1,5 @@
 using System;
-using ZombieRecovery;
+using AdminPanelFlyModeFix;
 
 static class Program
 {

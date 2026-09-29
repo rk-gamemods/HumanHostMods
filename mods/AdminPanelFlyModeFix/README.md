@@ -1,6 +1,15 @@
-# Zombie Recovery
+# Admin Panel - Fly Mode Fix
 
-Local compatibility guard and opt-in recovery tool for Human Host 0.8.316.
+An automatic patch for Admin Panel, with a manual repair tool for zombies
+already stuck in the air. The patch runs whenever the game runs. The repair
+tool runs only when requested. Both are included in this one mod.
+
+Human Host Mod Manager lists it as **Admin Panel - Fly Mode Fix**, next to
+**Admin Panel** when sorted by name. Its DLL carries the same name because
+HHMM uses the filename for locally installed mods. Previously named
+ZombieRecovery; remove that old DLL when upgrading to avoid duplicate copies.
+
+Prepared for Human Host 0.8.316.
 It corrects two Admin Panel 1.1.9 patches that affect all creature controllers
 when the player enables Fly Mode. Existing airborne zombies need separate
 diagnosis: that fly flag is not serialized, and turning it off resumes gravity
@@ -28,7 +37,7 @@ the game is closed removes the guard on the next launch.
 
 ## Diagnostics and recovery
 
-Reports are written to `BepInEx/plugins/ZombieRecovery/diagnostics/latest.json`.
+Reports are written to `BepInEx/plugins/Admin Panel - Fly Mode Fix/diagnostics/latest.json`.
 Press **Ctrl+Shift+F8** to request a fresh report. Recovery starts disabled on
 each session and save change. **Ctrl+Shift+F9** enables a 120-game-second pass;
 repeating the shortcut during that pass does not restart it.
@@ -69,12 +78,13 @@ Verified against the 0.8.316 decompilation before implementation:
 ## Build and checks
 
 ```powershell
-dotnet run --project tests/ZombieRecovery.Checks -c Release
+dotnet run --project tests/AdminPanelFlyModeFix.Checks -c Release
 dotnet build HumanHostMods.slnx -c Release
 # Only while the game is closed:
-dotnet build mods/ZombieRecovery -c Release -p:DeployToGame=true
+dotnet build mods/AdminPanelFlyModeFix -c Release -p:DeployToGame=true
 ```
 
 The isolated checks cover production decision rules, not Unity terrain or
-Harmony dispatch. Runtime validation must confirm the two replacements in the
-BepInEx log and compare live diagnostics before and after any recovery.
+Harmony dispatch. The user performs all game launches, gameplay and HHMM UI
+verification. After user testing, inspect the BepInEx log for the two
+replacements and compare diagnostic reports before and after any recovery.
