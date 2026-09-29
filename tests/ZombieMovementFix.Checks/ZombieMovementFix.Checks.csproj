@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <NoWarn>$(NoWarn);CS0649</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../mods/ZombieMovementFix/MovementRules.cs" Link="MovementRules.cs" />
+    <Compile Include="../../mods/ZombieMovementFix/Audit.cs" Link="Audit.cs" />
+    <Compile Include="../../mods/ZombieMovementFix/RepairTransaction.cs" Link="RepairTransaction.cs" />
+  </ItemGroup>
+</Project>

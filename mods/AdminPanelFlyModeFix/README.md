@@ -4,6 +4,13 @@ An automatic patch for Admin Panel, with a manual repair tool for zombies
 already stuck in the air. The patch runs whenever the game runs. The repair
 tool runs only when requested. Both are included in this one mod.
 
+The slot 1 report subsequently identified disabled zombie movement controllers.
+This mod's old stationary-hover tool excludes that state. Use the separate
+[Human Host - Zombie Movement Fix](../ZombieMovementFix/README.md) for automatic
+recovery of that failure. The Admin Panel compatibility patch remains a
+separate correction; it has not been established as the trigger for those
+disabled controllers.
+
 Human Host Mod Manager lists it as **Admin Panel - Fly Mode Fix**, next to
 **Admin Panel** when sorted by name. Its DLL carries the same name because
 HHMM uses the filename for locally installed mods. Previously named
@@ -44,8 +51,9 @@ the row count before publication. A rolling history retains successive snapshots
 (two files of roughly 8 MiB each). Read-only movement and anti-fall probes record
 controller calls and repositioning, while each row reports why repair excludes
 that zombie and where its physics body and visible model are located. These
-probes do not change movement. The persistent floating-zombie cause remains
-unconfirmed until a report from the affected game session supplies that evidence.
+probes do not change movement. The affected session's report now confirms missing
+controller updates on the airborne zombies. The trigger that disabled those
+controllers remains unconfirmed; see the movement fix notes linked above.
 
 Press **Ctrl+Shift+F8** to request a fresh report. Recovery starts disabled on
 each session and save change. **Ctrl+Shift+F9** enables a 120-game-second pass;

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsHumanHostMod>true</IsHumanHostMod>
+    <AssemblyName>Human Host - Zombie Movement Fix</AssemblyName>
+    <RootNamespace>ZombieMovementFix</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <HumanHostRef Include="Creature" />
+    <HumanHostRef Include="Player" />
+    <HumanHostRef Include="AI" />
+    <HumanHostRef Include="Terrain" />
+    <HumanHostRef Include="G_Save" />
+    <HumanHostRef Include="Global_Funcs" />
+    <HumanHostRef Include="UnityEngine.PhysicsModule" />
+  </ItemGroup>
+</Project>

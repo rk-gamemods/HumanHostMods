@@ -3,5 +3,6 @@
     <Project Path="mods/ExpandedHordes/ExpandedHordes.csproj" />
     <Project Path="mods/HelloHost/HelloHost.csproj" />
     <Project Path="mods/AdminPanelFlyModeFix/AdminPanelFlyModeFix.csproj" />
+    <Project Path="mods/ZombieMovementFix/ZombieMovementFix.csproj" />
   </Folder>
 </Solution>
