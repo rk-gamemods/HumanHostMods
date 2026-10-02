@@ -39,6 +39,17 @@ class Snapshot:
         if path.exists():
             shutil.rmtree(path)
 
+    def move_output_to_backup(self):
+        # Windows refuses to rename a directory while any process holds a handle
+        # inside it, such as an editor's Git integration watching .git.
+        try:
+            os.replace(self.output, self.backup)
+        except PermissionError as exc:
+            raise RuntimeError(
+                f"Another process holds a file or directory open inside {self.output}, so it cannot be "
+                "replaced. A common cause is an editor's Git integration watching its .git folder. "
+                "Close that repository or program, then rerun.") from exc
+
     def write_journal(self, data):
         temporary = self.journal.with_suffix(".tmp")
         with temporary.open("w", encoding="utf-8") as handle:
@@ -109,6 +120,15 @@ class Snapshot:
                 self.state["head"] = git(self.output, "rev-parse", "HEAD").stdout.strip()
             self.original_files = self.fingerprint()
             self.write_journal(self.state)
+            if self.state["existed"]:
+                # Probe the publication swap now instead of failing after a long generation.
+                # The journal lets recovery restore the output if the swap back is interrupted.
+                try:
+                    self.move_output_to_backup()
+                except RuntimeError:
+                    self.journal.unlink()
+                    raise
+                os.replace(self.backup, self.output)
             self.stage.mkdir()
             return self
         except BaseException:
@@ -124,7 +144,7 @@ class Snapshot:
         self.state["phase"] = "publishing"
         self.write_journal(self.state)
         if self.output.exists():
-            os.replace(self.output, self.backup)
+            self.move_output_to_backup()
         os.replace(self.stage, self.output)
         if (self.backup / ".git").exists():
             os.replace(self.backup / ".git", self.output / ".git")

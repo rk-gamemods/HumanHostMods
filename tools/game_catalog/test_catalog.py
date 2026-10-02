@@ -294,6 +294,22 @@ class SnapshotTests(unittest.TestCase):
                 with Snapshot(self.output):
                     self.fail("Second writer acquired lock")
 
+    @unittest.skipUnless(os.name == "nt", "Only Windows refuses to rename a directory with open handles inside")
+    def test_held_output_fails_before_generation(self):
+        # A process working directory inside .git holds a handle, like an editor's Git watcher.
+        previous = os.getcwd()
+        os.chdir(self.output / ".git")
+        try:
+            with self.assertRaisesRegex(RuntimeError, "Another process holds"):
+                with Snapshot(self.output) as snapshot:
+                    self.fail("Generation started although publication cannot replace the output")
+        finally:
+            os.chdir(previous)
+        snapshot = Snapshot(self.output)
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+        self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+
     def test_dirty_snapshot_is_preserved(self):
         (self.output / "notes.txt").write_text("user work")
         with self.assertRaisesRegex(RuntimeError, "local changes"):
