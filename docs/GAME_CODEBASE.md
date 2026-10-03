@@ -178,6 +178,8 @@ An assembly failure also cancels pending and running siblings. Before promotion,
 the journal records the prepared tree, commit and index identities. Recovery
 retains that exact completed result and rolls back recognized intermediate swap
 states; unrecognized states preserve both directories and require inspection.
+A second interruption during recovery can halt as ambiguous while preserving both
+directories; the operator must scrap the incomplete capture and rerun.
 Deadlines add no timing fields to generator inputs or hashes.
 
 The command refuses dirty snapshots, ignored local files, Git remotes, and

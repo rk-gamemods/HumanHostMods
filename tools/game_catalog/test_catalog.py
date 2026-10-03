@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import struct
 import sys
 import tempfile
@@ -12,7 +13,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--python-packages")
@@ -163,6 +164,38 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(returned, "Blocked consumer defeated process deadline")
         self.assertTrue(failures and "deadline exceeded" in failures[0])
         self.assertIn("blocked stderr", failures[0])
+        self.assert_dead(int(pidfile.read_text()))
+
+    def test_failed_termination_has_a_finite_reap_deadline(self):
+        wait = Mock(side_effect=subprocess.TimeoutExpired("stand-in", 30))
+        process = SimpleNamespace(stdout=io.BytesIO(), stderr=io.BytesIO(), pid=123,
+                                  returncode=None, poll=lambda: None, wait=wait)
+        cleanup = Mock(side_effect=OSError("tree termination failed"))
+        with patch("processes.subprocess.Popen", return_value=process), patch("processes.windows_job", return_value=cleanup), patch("processes.os.name", "nt"):
+            with self.assertRaisesRegex(RuntimeError, "tree termination failed.*still alive"):
+                run_process(["stand-in"], timeout=0)
+        wait.assert_called_once_with(timeout=30)
+
+    def test_cli_exits_when_neither_output_pipe_is_drained(self):
+        pidfile = self.root / "cli-child-pid"
+        code = ("import os,sys,threading,time; from pathlib import Path; "
+                f"Path({str(pidfile)!r}).write_text(str(os.getpid())); "
+                "threading.Thread(target=lambda: sys.stdout.buffer.write(b'o'*1048576)).start(); "
+                "sys.stderr.buffer.write(b'e'*1048576); sys.stderr.buffer.flush(); time.sleep(60)")
+        runner = Path(__file__).with_name("processes.py")
+        started = time.monotonic()
+        child = subprocess.Popen([sys.executable, str(runner), "1.5", sys.executable, "-c", code],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            # 1.5s deadline, two 1s pipe joins, 1s diagnostic join, startup slack.
+            self.assertEqual(child.wait(timeout=7.5), 1)
+            self.assertLess(time.monotonic() - started, 7.5)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+            child.stdout.close()
+            child.stderr.close()
         self.assert_dead(int(pidfile.read_text()))
 
     def test_assembly_failure_cancels_pending_and_running_siblings(self):
@@ -585,6 +618,45 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "prepared")
         self.assertFalse(snapshot.backup.exists() or snapshot.journal.exists())
 
+    def test_interrupted_probe_accepts_equivalent_journal_path(self):
+        snapshot = self.interrupt_probe()
+        parent = str(self.output.parent)
+        if os.name == "nt":
+            import ctypes
+            short = ctypes.create_unicode_buffer(32768)
+            if ctypes.windll.kernel32.GetShortPathNameW(parent, short, len(short)):
+                parent = short.value
+            parent = parent.swapcase()
+        alias = os.path.join(parent, ".", self.output.name)
+        state = json.loads(snapshot.journal.read_text())
+        state["output"] = alias
+        snapshot.write_journal(state)
+        with Snapshot(self.output):
+            pass
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+        self.assertFalse(snapshot.backup.exists() or snapshot.journal.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows read-only bit prevents unlink")
+    def test_read_only_repair_never_changes_non_git_files(self):
+        import stat
+        snapshot = Snapshot(self.output)
+        for root in (snapshot.stage, snapshot.backup):
+            with self.subTest(root=root):
+                root.mkdir()
+                protected = root / "protected.txt"
+                protected.write_text("preserve protection")
+                os.chmod(protected, stat.S_IREAD)
+                try:
+                    with self.assertRaises(PermissionError):
+                        snapshot.remove_owned(root)
+                    self.assertEqual(protected.read_text(), "preserve protection")
+                    self.assertFalse(protected.stat().st_mode & stat.S_IWRITE)
+                finally:
+                    if protected.exists():
+                        os.chmod(protected, stat.S_IREAD | stat.S_IWRITE)
+                    snapshot.remove_owned(root)
+
     def test_preparation_preserves_original_head_and_index(self):
         with Snapshot(self.output) as snapshot:
             (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
@@ -734,6 +806,27 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "prepared")
         self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
         self.assertTrue(snapshot.journal.exists())
+
+    def test_second_interruption_during_recovery_preserves_both_directories(self):
+        snapshot = self.interrupted_promotion()
+        # Leave a recognized partial reset: prepared HEAD, original index.
+        git(self.output, "read-tree", self.head.strip())
+        replace = os.replace
+        def interrupt_first_mutation(source, destination):
+            replace(source, destination)
+            if Path(source) == self.output / ".git":
+                raise RuntimeError("recovery interrupted after first mutation")
+        with patch("snapshot.os.replace", side_effect=interrupt_first_mutation):
+            with self.assertRaisesRegex(RuntimeError, "after first mutation"):
+                snapshot.recover()
+        with self.assertRaisesRegex(RuntimeError, "operator must scrap.*rerun") as caught:
+            with Snapshot(self.output):
+                self.fail("Second recovery interruption was accepted")
+        self.assertIn(str(self.output), str(caught.exception))
+        self.assertIn(str(snapshot.backup), str(caught.exception))
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "prepared")
+        self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
+        self.assertTrue((snapshot.backup / ".git").exists() and snapshot.journal.exists())
 
 
 if __name__ == "__main__":

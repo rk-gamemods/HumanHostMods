@@ -63,7 +63,9 @@ class Snapshot:
         if path.exists():
             def retry(function, target, exc):
                 mode = os.stat(target).st_mode
-                if os.name != "nt" or not isinstance(exc, PermissionError) or mode & stat.S_IWRITE:
+                git_dir = path / ".git"
+                if (os.name != "nt" or not isinstance(exc, PermissionError) or mode & stat.S_IWRITE or
+                        not git_dir.is_dir() or not Path(target).resolve().is_relative_to(git_dir)):
                     raise exc
                 # Git's owned loose objects are read-only on Windows.
                 os.chmod(target, mode | stat.S_IWRITE)
@@ -95,7 +97,7 @@ class Snapshot:
                 raise RuntimeError("Unowned staging/backup directory exists; inspect it before retrying.")
             return
         state = json.loads(self.journal.read_text(encoding="utf-8"))
-        if state["output"] != str(self.output):
+        if os.path.normcase(os.path.realpath(state["output"])) != os.path.normcase(os.path.realpath(self.output)):
             raise RuntimeError("Snapshot journal belongs to a different output path")
         if state["phase"] not in ("staging", "publishing", "committed"):
             raise RuntimeError("Unknown snapshot journal phase; preserving all directories")
@@ -110,7 +112,10 @@ class Snapshot:
         if state["phase"] in ("publishing", "committed"):
             def ambiguous():
                 raise RuntimeError(f"Ambiguous snapshot recovery: {self.output} matches neither the original "
-                                   "nor a journaled publication state; preserving output, staging and backup directories.")
+                                   "nor a journaled publication state; stopping safely and preserving both directories "
+                                   f"{self.output} and {self.backup}, plus staging {self.stage}. "
+                                   "A second interruption during recovery can leave this state; "
+                                   "the operator must scrap the incomplete capture and rerun.")
             def identity(root):
                 if not (root / ".git").is_dir():
                     return None, None, None

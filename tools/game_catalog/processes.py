@@ -20,6 +20,8 @@ CAPTURE_SECONDS = 14400
 WIKI_SECONDS = 15000  # Wiki's 4-hour watchdog plus 10 minutes for its timeout report.
 STDERR_LIMIT = 4096
 READER_JOIN_SECONDS = 1  # Cleanup grace per pipe, including a blocked consumer.
+REAP_SECONDS = 30  # Bound reaping even when tree termination fails.
+ERROR_WRITE_SECONDS = 1  # CLI diagnostics must not wait for a stalled stderr.
 
 
 def windows_job(process):
@@ -131,7 +133,10 @@ def run_process(args, *, timeout, check=True, text=True, encoding="utf-8",
             except Exception as exc:
                 reason = f"{reason or 'cleanup failed'}; tree cleanup: {exc}"
             finally:
-                process.wait()
+                try:
+                    process.wait(timeout=REAP_SECONDS)
+                except subprocess.TimeoutExpired:
+                    reason = f"{reason or 'cleanup failed'}; process {process.pid} still alive after {REAP_SECONDS:g}s reap deadline"
         for reader in readers:
             reader.join(READER_JOIN_SECONDS)
         if any(reader.is_alive() for reader in readers):
@@ -148,5 +153,13 @@ if __name__ == "__main__":
     try:
         run_process(sys.argv[2:], timeout=float(sys.argv[1]), forward=True)
     except RuntimeError as exc:
-        print(exc, file=sys.stderr)
-        sys.exit(1)
+        def report(message):
+            try:
+                print(message, file=sys.stderr, flush=True)
+            except OSError:
+                pass
+        reporter = threading.Thread(target=report, args=(str(exc),), daemon=True)
+        reporter.start()
+        reporter.join(ERROR_WRITE_SECONDS)
+        # Bypass stream finalization, which can wait for blocked daemon writers.
+        os._exit(1)
