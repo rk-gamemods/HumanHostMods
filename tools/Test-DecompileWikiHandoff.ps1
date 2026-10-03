@@ -26,11 +26,25 @@ function Run-Case([hashtable]$Extra, [int]$ExpectedCalls, [string]$ExpectedError
     Assert-True ($global:DecompileHandoffCalls.Count -eq $ExpectedCalls) "Expected $ExpectedCalls calls, received $($global:DecompileHandoffCalls.Count). Error: $caught"
     if ($ExpectedError) { Assert-True ($caught -like "*$ExpectedError*") "Unexpected failure: $caught" }
     else { Assert-True (-not $caught) "Unexpected failure: $caught" }
-    Assert-True ($global:DecompileHandoffCalls[0][1] -like '*game_catalog\refresh.py') 'Capture must run first.'
+    for ($index = 0; $index -lt $ExpectedCalls; $index++) {
+        $runnerArgs = $global:DecompileHandoffCalls[$index]
+        Assert-True ($runnerArgs[0] -eq '-3') 'Runner must use Python 3.'
+        Assert-True ($runnerArgs[1] -eq (Join-Path $PSScriptRoot 'game_catalog\processes.py')) 'Command must use the bounded runner.'
+        $deadline = if ($index -eq 0) { 14400 } else { 15000 }
+        Assert-True ($runnerArgs[2] -eq $deadline) "Wrong runner deadline for call $index."
+        Assert-True ($runnerArgs[3] -eq 'py') 'Runner must launch the inner Python command.'
+    }
+    $captureArgs = $global:DecompileHandoffCalls[0][4..($global:DecompileHandoffCalls[0].Count - 1)]
+    Assert-True ($captureArgs[0] -eq '-3') 'Capture must use Python 3.'
+    Assert-True ($captureArgs[1] -eq (Join-Path $PSScriptRoot 'game_catalog\refresh.py')) 'Capture must run first.'
+    Assert-True ($captureArgs[2] -eq '--game' -and $captureArgs[3] -eq $game) 'Wrong capture game path.'
+    Assert-True ($captureArgs[4] -eq '--output' -and $captureArgs[5] -eq (Join-Path $fixture 'source output')) 'Capture output path with spaces was not preserved.'
     if ($ExpectedCalls -eq 2) {
-        $wikiArgs = $global:DecompileHandoffCalls[1]
+        $wikiArgs = $global:DecompileHandoffCalls[1][4..($global:DecompileHandoffCalls[1].Count - 1)]
+        Assert-True ($wikiArgs.Count -eq 6 -and $wikiArgs[0] -eq '-3') 'Wrong inner wiki command shape.'
         Assert-True ($wikiArgs[1] -eq (Join-Path $wiki 'wiki.py')) 'Wrong wiki entrypoint.'
         Assert-True ($wikiArgs[2] -eq 'update') 'Must run the normal update command.'
+        Assert-True ($wikiArgs[3] -eq '--source') 'Source option was not supplied.'
         Assert-True ($wikiArgs[4] -eq (Join-Path $fixture 'source output')) 'Source path with spaces was not preserved.'
         Assert-True ($wikiArgs[5] -eq '--operator-report') 'Final exception report was not requested.'
     }
@@ -45,7 +59,9 @@ try {
     Run-Case @{} 1 'Game codebase refresh failed'
     $global:DecompileHandoffFailCall = 2
     Run-Case @{} 2 'wiki update failed'
-    Write-Host 'Decompile/wiki handoff: 7 cases passed.'
+    $global:DecompileHandoffFailCall = 1
+    Run-Case @{SkipWiki = $true} 1 'Game codebase refresh failed (exit 7).'
+    Write-Host 'Decompile/wiki handoff: 8 cases passed.'
 } finally {
     # The fixture has no Git objects or protected files. Bound its exact path.
     $resolved = [System.IO.Path]::GetFullPath($fixture)

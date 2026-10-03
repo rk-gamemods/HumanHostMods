@@ -44,7 +44,7 @@ if ($PythonPackagesPath) { $arguments += @('--python-packages', $PythonPackagesP
 if ($Assemblies) { $arguments += '--assemblies'; $arguments += $Assemblies }
 if ($NoGit) { $arguments += '--no-git' }
 # -All remains accepted for existing callers. Full non-framework coverage is now the default.
-& py @arguments
+& py -3 (Join-Path $PSScriptRoot 'game_catalog\processes.py') 14400 py @arguments
 if ($LASTEXITCODE -ne 0) { throw "Game codebase refresh failed (exit $LASTEXITCODE)." }
 if ($SkipWiki -or $NoGit -or $Assemblies) {
     Write-Host 'Wiki update skipped: source-only or partial diagnostic capture requested.'
@@ -55,5 +55,7 @@ $wikiCommand = Join-Path $WikiPath 'wiki.py'
 if (-not (Test-Path -LiteralPath $wikiCommand -PathType Leaf)) {
     throw "Capture completed, but the wiki command is missing: $wikiCommand. Configure -WikiPath or use -SkipWiki for source-only work."
 }
-& py -3 $wikiCommand update --source $OutputPath --operator-report
+# Allow the wiki's own 4-hour watchdog to record its timeout, plus 10 minutes
+# for reporting and cleanup, before the outer runner terminates its process tree.
+& py -3 (Join-Path $PSScriptRoot 'game_catalog\processes.py') 15000 py -3 $wikiCommand update --source $OutputPath --operator-report
 if ($LASTEXITCODE -ne 0) { throw "Capture completed; wiki update failed (exit $LASTEXITCODE). See the execution-failure report above." }

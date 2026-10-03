@@ -7,9 +7,10 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import threading
 import sys
 from pathlib import Path
+from processes import run_process, GIT_SECONDS, PROBE_SECONDS, ASSEMBLY_SECONDS, CAPTURE_SECONDS
 
 FRAMEWORK = re.compile(r"^(System(?:\.|$)|Mono(?:\.|$)|mscorlib$|netstandard$|Microsoft\.|UnityEngine)")
 
@@ -90,6 +91,7 @@ def decompile(game, stage, names, workers):
     manifest = [{"name": p.name, "sha256": digest(p), "decompiled": p in selected,
                  "reason": "selected" if p in selected else ("explicit assembly subset" if names else "runtime/framework module; API use remains in game source")}
                 for p in assemblies]
+    cancel = threading.Event()
 
     def run(path):
         out = stage / path.stem
@@ -102,20 +104,24 @@ def decompile(game, stage, names, workers):
         if core.exists():
             args += ["-r", str(core)]
         args.append(str(path))
-        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-        if result.returncode:
-            raise RuntimeError(f"Decompilation failed for {path.name}:\n{result.stdout[-12000:]}")
-        resources = subprocess.run(["ilspycmd", "--disable-updatecheck", "--list-resources", str(path)],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", check=True)
+        run_process(args, timeout=ASSEMBLY_SECONDS, cancel=cancel)
+        resources = run_process(["ilspycmd", "--disable-updatecheck", "--list-resources", str(path)],
+                                timeout=ASSEMBLY_SECONDS, cancel=cancel)
         return path.name, resources.stdout.splitlines()
 
     embedded = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         pending = {executor.submit(run, path): path for path in selected}
-        for index, future in enumerate(concurrent.futures.as_completed(pending), 1):
-            name, resources = future.result()
-            print(f"[C# {index}/{len(selected)}] {name}", flush=True)
-            embedded.append({"assembly": name, "resources": resources, "treatment": "names only; no resource extraction"})
+        try:
+            for index, future in enumerate(concurrent.futures.as_completed(pending), 1):
+                name, resources = future.result()
+                print(f"[C# {index}/{len(selected)}] {name}", flush=True)
+                embedded.append({"assembly": name, "resources": resources, "treatment": "names only; no resource extraction"})
+        except BaseException:
+            cancel.set()
+            for future in pending:
+                future.cancel()
+            raise
     return manifest, sorted(embedded, key=lambda x: x["assembly"])
 
 
@@ -176,7 +182,7 @@ def main():
     if output == workspace or output.is_relative_to(game) or game.is_relative_to(output):
         raise ValueError("Output must be a separate generated snapshot directory outside the game")
     if output.is_relative_to(workspace):
-        ignored = subprocess.run(["git", "-C", str(workspace), "check-ignore", "-q", "--", output.relative_to(workspace).as_posix() + "/"])
+        ignored = run_process(["git", "-C", str(workspace), "check-ignore", "-q", "--", output.relative_to(workspace).as_posix() + "/"], timeout=GIT_SECONDS, check=False)
         if ignored.returncode:
             raise ValueError("Output inside the workspace must be gitignored; use HumanHostCodebase or a path under .local")
     versions = {name: importlib.metadata.version(name) for name in ("UnityPy", "TypeTreeGeneratorAPI")}
@@ -190,7 +196,7 @@ def main():
         raise ValueError("Partial assembly exports require a new output path; they cannot replace a full snapshot")
     if options.workers < 1:
         raise ValueError("workers must be positive")
-    decompiler = subprocess.run(["ilspycmd", "--version"], check=True, capture_output=True, text=True).stdout.splitlines()[0]
+    decompiler = run_process(["ilspycmd", "--version"], timeout=PROBE_SECONDS).stdout.splitlines()[0]
     with Snapshot(output, options.no_git) as snapshot:
         stage = snapshot.stage
         script_root = Path(__file__).resolve().parent
@@ -260,4 +266,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Supervise even direct CLI use, including in-process decoder stalls.
+    if os.environ.get("HUMANHOST_CAPTURE_CHILD") == "1":
+        main()
+    else:
+        child_env = dict(os.environ, HUMANHOST_CAPTURE_CHILD="1")
+        run_process([sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
+                    timeout=CAPTURE_SECONDS, env=child_env, forward=True)

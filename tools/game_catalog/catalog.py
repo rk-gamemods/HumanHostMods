@@ -6,7 +6,6 @@ import io
 import json
 import math
 import re
-import subprocess
 from pathlib import Path
 
 import UnityPy
@@ -17,6 +16,7 @@ from UnityPy.streams import EndianBinaryReader
 from addressables import decode as decode_addressables
 from bundles import Bundle, MemberStream
 from schemas import normalize_generated, read_with_managed_references
+from processes import run_process, DECODER_SECONDS
 
 
 # These objects remain cataloged by name, type, ID, source, and byte size.
@@ -173,11 +173,9 @@ class Catalog:
                 continue
             if signature != b"UnityFS":
                 helper = Path(__file__).resolve().parents[1] / "Read-GameBundle.ps1"
-                result = subprocess.run(["pwsh", "-NoProfile", "-File", str(helper),
+                result = run_process(["pwsh", "-NoProfile", "-File", str(helper),
                                          "-GameData", str(self.data), "-BundlePath", str(path)],
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if result.returncode:
-                    raise RuntimeError(result.stderr.decode(errors="replace"))
+                                     timeout=DECODER_SECONDS, text=False)
                 stream = io.BytesIO(result.stdout)
                 self.streams.append(stream)
             bundle = Bundle(stream)

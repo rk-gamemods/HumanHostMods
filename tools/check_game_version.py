@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import subprocess
+from game_catalog.processes import run_process, GIT_SECONDS
 
 
 def contained(root, relative):
@@ -15,7 +15,7 @@ def contained(root, relative):
 
 
 def check(source, game):
-    if subprocess.check_output(["git", "-C", str(source), "status", "--porcelain=v1", "--untracked-files=all"]):
+    if run_process(["git", "-C", str(source), "status", "--porcelain=v1", "--untracked-files=all"], timeout=GIT_SECONDS).stdout:
         raise ValueError("Capture has uncommitted changes")
     catalog = source / "Catalog"
     metadata = json.loads((catalog / "game-version.json").read_bytes())
@@ -39,7 +39,7 @@ def check(source, game):
     with installed.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == evidence["source_sha256"]
     return {"status": "passed", "version": metadata["version"], "evidence": evidence,
-            "source_commit": subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"]).decode().strip(),
+            "source_commit": run_process(["git", "-C", str(source), "rev-parse", "HEAD"], timeout=GIT_SECONDS).stdout.strip(),
             "scope": "Captured PlayerSettings field, source mapping, input inventory and installed input hash; no gameplay verification"}
 
 
