@@ -1,6 +1,7 @@
 """Dependency-free checks: py -3 tools/game_catalog/test_timing.py"""
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import refresh
-from timing import Timing, RUNS, PHASES, supervise_capture, timing_parser
+from timing import Timing, RUNS, PHASES, supervise_capture
 
 
 class TimingTests(unittest.TestCase):
@@ -22,24 +23,26 @@ class TimingTests(unittest.TestCase):
         RUNS.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(prefix="timing-test-", dir=RUNS)
         self.directory = Path(self.temp.name)
-        self.hint = self.directory / "requested.json"
+        self.root = patch("timing.RUNS", self.directory)
+        self.root.start()
         self.messages = []
         self.reporting = patch("timing.emit", side_effect=lambda message, stream=None: self.messages.append(message))
         self.reporting.start()
 
     def tearDown(self):
         self.reporting.stop()
+        self.root.stop()
         self.temp.cleanup()
 
     def timer(self):
-        return Timing("synthetic snapshot", self.hint)
+        return Timing("synthetic snapshot")
 
     def test_unwritable_directory_preserves_original_process_failure_and_timeout(self):
         for original in (RuntimeError("original process failed"), RuntimeError("original deadline exceeded")):
             with self.subTest(error=original), patch("timing.Path.mkdir", side_effect=PermissionError("unwritable receipt directory")), \
                     patch("processes.run_process", side_effect=original):
                 with self.assertRaises(RuntimeError) as caught:
-                    supervise_capture(["python", "synthetic.py", "--timing-receipt", str(self.hint)], 2)
+                    supervise_capture(["python", "synthetic.py"], 2)
                 self.assertIs(caught.exception, original)
         self.assertTrue(any(message.startswith("Warning:") and "unwritable" in message for message in self.messages))
         self.assertTrue(all("\n" not in message for message in self.messages if message.startswith("Warning:")))
@@ -61,35 +64,38 @@ class TimingTests(unittest.TestCase):
         timer.finish(original)
         self.assertTrue(any("cleanup checkpoint failed" in message for message in self.messages))
 
-    def test_snapshot_output_receipt_is_rejected_before_writes(self):
-        output = RUNS.parent / "synthetic snapshot"
-        with patch("timing.Path.open") as opened, self.assertRaisesRegex(ValueError, "must resolve inside"):
-            Timing(output, output / "capture.json")
-        opened.assert_not_called()
+    def test_failed_claim_write_is_cleaned_and_capture_continues_without_checkpoint(self):
+        opened = Path.open
+        @contextmanager
+        def broken_claim(stream):
+            with stream:
+                yield SimpleNamespace(write=Mock(side_effect=FileExistsError("claim write failed")))
+        def open_claim(path, *args, **kwargs):
+            stream = opened(path, *args, **kwargs)
+            return broken_claim(stream) if path.suffix == ".claim" else stream
+        def child(args, *, env, **kwargs):
+            self.assertEqual(env["HUMANHOST_CAPTURE_TIMING"], "")
+            with patch.dict(os.environ, env):
+                timer = Timing.resume(env["HUMANHOST_CAPTURE_TIMING"])
+            timer.update(outcome="succeeded")
+            with timer.measure("cleanup"):
+                pass
+            timer.finish()
+            return 0
+        with patch("timing.Path.open", autospec=True, side_effect=open_claim), patch("processes.run_process", side_effect=child):
+            self.assertEqual(supervise_capture(["python", "synthetic.py"], 2), 0)
+        self.assertEqual(list(self.directory.iterdir()), [])
+        self.assertTrue(any("claim write failed" in message for message in self.messages))
 
-    def test_snapshot_output_under_runs_still_cannot_contain_receipts(self):
+    def test_output_metadata_cannot_choose_receipt_directory(self):
         output = self.directory / "snapshot"
-        with patch("timing.Path.open") as opened, self.assertRaisesRegex(ValueError, "overlaps"):
-            Timing(output, output / "capture.json")
-        opened.assert_not_called()
-
-    def test_direct_main_rejects_snapshot_receipt_before_any_write(self):
-        output = self.directory / "snapshot"
-        args = ["refresh.py", "--game", "synthetic game", "--output", str(output),
-                f"--timing-receipt={output / 'capture.json'}"]
-        with patch("refresh.sys.argv", args), patch("timing.Path.open") as opened, \
-                self.assertRaisesRegex(ValueError, "overlaps"):
-            refresh.main()
-        opened.assert_not_called()
-
-    def test_shared_parser_accepts_equals_and_separate_receipt_arguments(self):
-        for args in (["--timing-receipt", str(self.hint)], [f"--timing-receipt={self.hint}"]):
-            self.assertEqual(timing_parser().parse_args(args).timing_receipt, self.hint)
         expected = SimpleNamespace(returncode=0)
         with patch("processes.run_process", return_value=expected):
-            result = supervise_capture(["python", "synthetic.py", f"--timing-receipt={self.hint}"], 2)
+            result = supervise_capture(["python", "synthetic.py", "--output", str(output)], 2)
         self.assertIs(result, expected)
-        self.assertEqual(len(list(self.directory.glob("capture-*.json"))), 1)
+        receipt, = self.directory.glob("capture-*.json")
+        self.assertEqual(json.loads(receipt.read_text())["output_path"], str(output))
+        self.assertFalse(output.exists())
 
     def test_timing_source_changes_do_not_change_provenance_hashes(self):
         script_root = self.directory / "tools" / "game_catalog"
@@ -111,75 +117,64 @@ class TimingTests(unittest.TestCase):
         with patch("timing.datetime") as clock:
             clock.now.return_value = fixed
             first, second = self.timer(), self.timer()
+            first.drain()
+            second.drain()
         self.assertNotEqual(first.receipt, second.receipt)
         for timer in (first, second):
-            self.assertRegex(timer.receipt.name, r"^capture-20261003T000000Z-\d+-[0-9a-f]{8}\.json$")
+            self.assertRegex(timer.receipt.name, r"^capture-20261003T000000Z-\d+-[0-9a-f]{16}\.json$")
             timer.update(outcome="succeeded")
             timer.finish()
             self.assertEqual(json.loads(timer.receipt.read_text())["outcome"], "succeeded")
 
     def test_existing_receipt_is_never_overwritten_even_on_id_collision(self):
-        fixed = datetime(2026, 10, 3, tzinfo=timezone.utc)
-        with patch("timing.datetime") as clock, patch("timing.uuid.uuid4", return_value=SimpleNamespace(hex="a" * 32)):
-            clock.now.return_value = fixed
+        stem = "capture-20261003T000000Z-123-" + "a" * 16
+        with patch("timing.capture_name", side_effect=[stem, stem, stem[:-16] + "b" * 16]):
             first = self.timer()
             first.update(outcome="succeeded")
             first.finish()
             original = first.receipt.read_bytes()
             second = self.timer()
             second.finish(RuntimeError("second failed"))
-        self.assertEqual(second.receipt.read_bytes(), original)
+        self.assertNotEqual(first.receipt, second.receipt)
+        self.assertEqual(first.receipt.read_bytes(), original)
+        self.assertEqual(json.loads(second.receipt.read_text())["outcome"], "failed")
 
-    def test_colliding_child_cannot_adopt_another_runs_checkpoint(self):
-        fixed = datetime(2026, 10, 3, tzinfo=timezone.utc)
-        with patch("timing.datetime") as clock, patch("timing.uuid.uuid4", return_value=SimpleNamespace(hex="b" * 32)):
-            clock.now.return_value = fixed
-            first = self.timer()
-            first.drain()
-            original = first.pending.read_bytes()
-            second = self.timer()
-            second.drain()
-            with patch.dict(os.environ, HUMANHOST_CAPTURE_TIMING_STATE=json.dumps(second.state)):
-                child = Timing.resume(second.pending)
-            child.update(outcome="reused")
-            child.drain()
-            self.assertEqual(first.pending.read_bytes(), original)
-            child.finish()
-            second.finish()
-            self.assertEqual(first.pending.read_bytes(), original)
-            first.finish()
+    def test_any_existing_stem_is_preserved_and_child_gets_only_reserved_checkpoint(self):
+        for suffix in (".claim", ".pending", ".json", ".pending.orphan.tmp"):
+            with self.subTest(suffix=suffix):
+                stem = "capture-20261003T000000Z-123-" + "c" * 16
+                orphan = self.directory / (stem + suffix)
+                orphan.write_text("unowned original")
+                fresh = stem[:-16] + os.urandom(8).hex()
+                def child(args, *, env, **kwargs):
+                    pending = Path(env["HUMANHOST_CAPTURE_TIMING"])
+                    self.assertEqual(pending, self.directory / (fresh + ".pending"))
+                    state = json.loads(env["HUMANHOST_CAPTURE_TIMING_STATE"])
+                    self.assertEqual(pending.with_suffix(".claim").read_text(), state["owner"])
+                    self.assertEqual(json.loads(pending.read_text())["owner"], state["owner"])
+                    with patch.dict(os.environ, env):
+                        timer = Timing.resume(str(pending))
+                    timer.update(outcome="reused")
+                    timer.drain()
+                    timer.finish()
+                    return 0
+                with patch("timing.capture_name", side_effect=[stem, fresh]), patch("processes.run_process", side_effect=child):
+                    self.assertEqual(supervise_capture(["python", "synthetic.py"], 2), 0)
+                self.assertEqual(orphan.read_text(), "unowned original")
+                self.assertEqual(json.loads((self.directory / (fresh + ".json")).read_text())["outcome"], "reused")
+                orphan.unlink()
 
     def test_checkpoint_read_and_replace_failures_do_not_change_success(self):
         for operation in ("timing.Path.read_text", "timing.os.replace"):
             with self.subTest(operation=operation), patch(operation, side_effect=OSError("diagnostic I/O failed")), \
                     patch("processes.run_process", return_value=0):
-                self.assertEqual(supervise_capture(["python", "synthetic.py", "--timing-receipt", str(self.hint)], 2), 0)
+                self.assertEqual(supervise_capture(["python", "synthetic.py"], 2), 0)
             if operation == "timing.Path.read_text":
                 receipt = next(self.directory.glob("capture-*.json"))
                 value = json.loads(receipt.read_text())
                 self.assertEqual(value["outcome"], "succeeded")
                 self.assertIsNone(value["error"])
         self.assertEqual(list(self.directory.glob("*.claim")), [])
-
-    def test_overlap_checks_both_directions_for_output_stage_backup_and_game(self):
-        for kind in ("output", "stage", "backup", "game"):
-            output = self.directory / "snapshot"
-            protected = output.with_name(output.name + ".catalog-" + kind) if kind in {"stage", "backup"} else output
-            for relation in ("inside", "ancestor", "equal"):
-                hint = protected / "receipts" / "hint.json" if relation == "inside" else protected / "hint.json"
-                if relation == "ancestor":
-                    hint = self.hint
-                with self.subTest(kind=kind, relation=relation), patch("timing.Path.open") as opened, \
-                        self.assertRaisesRegex(ValueError, "overlaps"):
-                    Timing("" if kind == "game" else output, hint, protected if kind == "game" else "")
-                opened.assert_not_called()
-
-    def test_overlap_checks_normalize_dot_segments(self):
-        output = self.directory / "unused" / ".." / "snapshot"
-        hint = self.directory / "snapshot" / "." / "receipts" / "hint.json"
-        with patch("timing.Path.open") as opened, self.assertRaisesRegex(ValueError, "overlaps"):
-            Timing(output, hint)
-        opened.assert_not_called()
 
     def test_claim_reservation_does_not_expose_json_and_is_cleaned_on_failure(self):
         timer = self.timer()
@@ -257,7 +252,7 @@ class TimingTests(unittest.TestCase):
                 timer.worker.join(2)
         self.assertFalse(timer.worker.is_alive())
 
-    def test_explicit_cli_success_reuse_failure_and_timeout(self):
+    def test_supervisor_success_reuse_failure_and_timeout(self):
         module = Path(__file__).with_name("timing.py")
         setup = ("import os,sys,time; "
                  f"sys.path.insert(0, {str(module.parent)!r}); "
@@ -270,8 +265,14 @@ class TimingTests(unittest.TestCase):
                     action = "t.update(outcome='failed', error='synthetic failure'); t.drain(); sys.exit(7)"
                 else:
                     action = f"t.update(outcome={outcome!r}); t.drain()"
-                result = subprocess.run([sys.executable, str(module), "2", sys.executable, "-c", setup + action,
-                                         "--output", "synthetic snapshot", f"--timing-receipt={self.hint}"],
+                # Redirect only the module constant, keeping receipt paths out of CLI arguments.
+                harness = (f"import sys,os; from pathlib import Path; sys.path.insert(0, {str(module.parent)!r}); "
+                           f"import timing; timing.RUNS=Path({str(self.directory)!r})\n"
+                           "try:\n"
+                           f" timing.supervise_capture({[sys.executable, '-c', setup + action, '--output', 'synthetic snapshot']!r}, 2)\n"
+                           "except Exception as exc:\n timing.cli_error(exc)\n"
+                           "os._exit(0)\n")
+                result = subprocess.run([sys.executable, "-c", harness],
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 1 if outcome in {"failed", "timeout"} else 0, result.stderr)
                 marker = next(line for line in result.stdout.splitlines() if line.startswith("CAPTURE_TIMING_RECEIPT="))

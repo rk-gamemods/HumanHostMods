@@ -473,12 +473,11 @@ class SnapshotTests(unittest.TestCase):
         shutil.rmtree(self.temp.name, onexc=retry)
         self.temp.cleanup()
 
-    def timed_capture(self, receipt, failure=None, force=False):
+    def timed_capture(self, failure=None, force=False):
         if not hasattr(self, "timing_directory"):
             RUNS.mkdir(parents=True, exist_ok=True)
             self.timing_directory = tempfile.TemporaryDirectory(prefix="catalog-timing-test-", dir=RUNS)
             self.addCleanup(self.timing_directory.cleanup)
-        receipt = Path(self.timing_directory.name) / receipt.name
         game = self.output.parent / "synthetic game"
         managed = game / "Human Host_Data" / "Managed"
         managed.mkdir(parents=True, exist_ok=True)
@@ -501,6 +500,7 @@ class SnapshotTests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout="stand-in decompiler\n")
         from contextlib import ExitStack
         with ExitStack() as stack:
+            stack.enter_context(patch("timing.RUNS", Path(self.timing_directory.name)))
             stack.enter_context(patch("refresh.sys.argv", ["refresh.py", "--game", str(game), "--output", str(self.output)]))
             stack.enter_context(patch("refresh.importlib.metadata.version", side_effect=lambda name: versions.get(name, "fixture")))
             stack.enter_context(patch("refresh.shutil.which", return_value="stand-in"))
@@ -509,7 +509,8 @@ class SnapshotTests(unittest.TestCase):
             stack.enter_context(patch("refresh.sys.stderr", new_callable=io.StringIO))
             if force:
                 stack.enter_context(patch("refresh.reusable_capture", return_value=False))
-            timing = Timing(self.output, receipt)
+            timing = Timing(self.output)
+            timing.drain()
             self.last_timing_receipt = timing.receipt
             error = None
             try:
@@ -536,8 +537,7 @@ class SnapshotTests(unittest.TestCase):
         return receipt
 
     def test_timing_success_reuse_and_forced_repeat_preserve_snapshot_identity(self):
-        first = self.output.parent / "first.json"
-        first = self.timed_capture(first)
+        first = self.timed_capture()
         receipt = self.assert_receipt(first, "succeeded", ["succeeded"] * 5)
         self.assertIsNone(receipt["error"])
         self.assertEqual(receipt["game"], {"version": "1.2", "build": "unknown"})
@@ -549,13 +549,11 @@ class SnapshotTests(unittest.TestCase):
         files = file_tree(self.output)
         self.assertEqual(receipt["output_commit"], head)
         self.assertNotIn("game_catalog/timing.py", json.loads((self.output / "Catalog" / "generator.json").read_text())["tools"])
-        reuse = self.output.parent / "reuse.json"
-        reuse = self.timed_capture(reuse)
+        reuse = self.timed_capture()
         reused = self.assert_receipt(reuse, "reused", ["succeeded", "skipped", "skipped", "skipped", "succeeded"])
         self.assertEqual(reused["output_commit"], head)
         self.assertEqual(reused["assemblies"], [])
-        repeat = self.output.parent / "repeat.json"
-        repeat = self.timed_capture(repeat, force=True)
+        repeat = self.timed_capture(force=True)
         repeated = self.assert_receipt(repeat, "succeeded", ["succeeded"] * 5)
         self.assertNotEqual(receipt["started_at"], repeated["started_at"])
         self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout.strip(), head)
@@ -565,9 +563,8 @@ class SnapshotTests(unittest.TestCase):
         self.assertFalse(any("capture-timing" in path.read_text(encoding="utf-8") for path in self.output.rglob("*.json")))
 
     def test_timing_failure_preserves_snapshot_and_records_cleanup(self):
-        path = self.output.parent / "failure.json"
         with self.assertRaisesRegex(RuntimeError, "synthetic decoding failure"):
-            self.timed_capture(path, failure="synthetic decoding failure")
+            self.timed_capture(failure="synthetic decoding failure")
         path = self.last_timing_receipt
         receipt = self.assert_receipt(path, "failed", ["succeeded", "failed", "skipped", "skipped", "succeeded"])
         self.assertEqual(receipt["error"], "synthetic decoding failure")

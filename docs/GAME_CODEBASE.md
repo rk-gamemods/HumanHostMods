@@ -48,7 +48,7 @@ gitignored, such as `HumanHostCodebase` or a path under `.local`.
 ## Timing receipt
 
 Every capture writes an atomic JSON receipt under the workspace root at
-`.local/runs/capture-<UTC yyyymmddTHHMMSSZ>-<pid>-<8 hex run id>.json`, including failures,
+`.local/runs/capture-<UTC yyyymmddTHHMMSSZ>-<pid>-<16 hex run id>.json`, including failures,
 deadlines and unchanged-input reuse. Schema `humanhost.capture-timing.v1` has
 UTC `started_at` and `finished_at` strings ending in `Z`, total `seconds`,
 `outcome` (`succeeded`, `failed` or `reused`), a short `error` or null,
@@ -68,12 +68,12 @@ snapshot hashes or commits. `timing.py` is excluded from the generator/tool
 provenance hashes because it does not affect generated outputs. Timing generates
 the random run id and reserves its unique name with an exclusive `.claim` file.
 Receipts appear only after atomic publication; an empty `.json` is never exposed.
-Owned claims and checkpoints are cleaned even if diagnostics fail. Existing files
-are preserved. `--timing-receipt <path>` (also `--timing-receipt=<path>`)
-selects a parent directory inside `.local/runs/`; timing still generates the
-filename. Paths outside that directory, or receipt directories overlapping game
-inputs, snapshot output, staging or backup in either direction, are usage errors
-rejected before writes using normalized absolute paths.
+Owned claims and checkpoints are cleaned even if diagnostics fail. The directory
+is fixed relative to `timing.py`'s own repository root; callers cannot select
+receipt or checkpoint paths. Any existing file with the generated stem causes
+reservation to retry with a new name. Existing files are never adopted or
+overwritten. The child receives its checkpoint path only after reservation
+succeeds; otherwise capture continues without checkpoint writes.
 One writer queue serializes all state updates and receipt/checkpoint I/O, with a
 bounded final flush. If checkpoint reading fails, the receipt uses the actual
 process result rather than assuming failure.

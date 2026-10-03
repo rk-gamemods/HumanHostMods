@@ -50,41 +50,20 @@ def short_error(error):
     return (str(error).splitlines() or [type(error).__name__])[0][:300]
 
 
-def timing_parser():
-    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
-    parser.add_argument("--timing-receipt", type=Path)
-    return parser
-
-
 def timing_options(args=None):
-    parser = timing_parser()
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--output", default="")
-    parser.add_argument("--game", default="")
     return parser.parse_known_args(args)[0]
 
 
-def receipt_directory(receipt, output="", game=""):
-    absolute = lambda path: Path(os.path.normcase(os.path.abspath(path)))
-    root = absolute(RUNS)
-    path = absolute(receipt) if receipt is not None else root / "capture.json"
-    if path == root or not path.is_relative_to(root):
-        raise ValueError(f"Timing receipt must resolve inside {root}")
-    protected = [absolute(game)] if game else []
-    if output:
-        snapshot = absolute(output)
-        protected += [snapshot, snapshot.with_name(snapshot.name + ".catalog-stage"),
-                      snapshot.with_name(snapshot.name + ".catalog-backup")]
-    if any(path.parent.is_relative_to(other) or other.is_relative_to(path.parent) for other in protected):
-        raise ValueError("Timing receipt directory overlaps snapshot output, staging, backup or game inputs")
-    return path.parent
+def capture_name():
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"capture-{stamp}-{os.getpid()}-{os.urandom(8).hex()}"
 
 
 class Timing:
-    def __init__(self, output="", receipt=None, game=""):
-        directory = receipt_directory(receipt, output, game)  # Usage errors precede all writes.
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        self.receipt = directory / f"capture-{stamp}-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
-        self.pending, self.claim = self.receipt.with_suffix(".pending"), self.receipt.with_suffix(".claim")
+    def __init__(self, output=""):
+        self.receipt = self.pending = self.claim = None
         self.state = {"owner": os.urandom(16).hex(), "started": time.perf_counter(), "active": {}, "receipt": {
             "schema": "humanhost.capture-timing.v1", "started_at": utc_now(), "finished_at": None,
             "seconds": 0.0, "outcome": "failed", "error": None, "output_path": str(output),
@@ -110,11 +89,10 @@ class Timing:
     @classmethod
     def resume(cls, pending):
         result = cls.__new__(cls)
-        result.pending = Path(pending)
-        result.receipt, result.claim = result.pending.with_suffix(".json"), result.pending.with_suffix(".claim")
+        result.pending = Path(pending) if pending else None
+        result.receipt = result.pending.with_suffix(".json") if pending else None
+        result.claim = result.pending.with_suffix(".claim") if pending else None
         result.state = json.loads(os.environ["HUMANHOST_CAPTURE_TIMING_STATE"])
-        receipt_directory(result.receipt, result.state["receipt"]["output_path"],
-                          os.environ.get("HUMANHOST_CAPTURE_GAME", ""))
         result.start_worker()
         return result
 
@@ -123,18 +101,35 @@ class Timing:
         self.tasks.put((operation, args))
 
     def reserve(self):
-        self.claim.parent.mkdir(parents=True, exist_ok=True)
-        with self.claim.open("x", encoding="utf-8") as stream:
+        RUNS.mkdir(parents=True, exist_ok=True)
+        for _ in range(32):
+            stem = capture_name()
+            if any(RUNS.glob(stem + ".*")):
+                continue
+            self.receipt = RUNS / (stem + ".json")
+            self.pending, self.claim = self.receipt.with_suffix(".pending"), self.receipt.with_suffix(".claim")
+            try:
+                stream = self.claim.open("x", encoding="utf-8")
+            except FileExistsError:
+                continue
             self.claim_owned = True
-            stream.write(self.state["owner"])
-        if self.receipt.exists() or self.pending.exists():
-            raise ValueError("receipt or checkpoint already exists")
-        self.writable = True
-        self.checkpoint()
+            with stream as claimed:
+                claimed.write(self.state["owner"])
+            if any(path != self.claim for path in RUNS.glob(stem + ".*")):
+                self.claim.unlink()
+                self.claim_owned = False
+                continue
+            self.writable = True
+            self.checkpoint()
+            return
+        raise RuntimeError("could not reserve a unique capture name")
+
+    @diagnostic
+    def child_checkpoint(self):
+        if self.drain() and self.writable:
+            return str(self.pending)
 
     def atomic_write(self, path, value):
-        if self.claim_owned and not self.writable:
-            raise ValueError("reservation failed; existing files must be preserved")
         if not self.claim_owned and self.claim.read_text(encoding="utf-8") != self.state["owner"]:
             raise ValueError("claim belongs to another run")
         if path == self.receipt and (not self.claim_owned or path.exists()):
@@ -153,7 +148,8 @@ class Timing:
 
     @diagnostic
     def checkpoint(self):
-        self.atomic_write(self.pending, self.state)
+        if self.pending is not None:
+            self.atomic_write(self.pending, self.state)
 
     def change(self, fields):
         self.state["receipt"].update(fields)
@@ -203,7 +199,7 @@ class Timing:
 
     def finalize(self, error, outcome, announce):
         try:
-            state = diagnostic(self.read_checkpoint)() or self.state
+            state = (diagnostic(self.read_checkpoint)() if self.writable else None) or self.state
             receipt, now = state["receipt"], time.perf_counter()
             if error is not None:
                 receipt.update(outcome="failed", error=receipt["error"] or short_error(error))
@@ -216,7 +212,7 @@ class Timing:
                              outcome="succeeded" if receipt["outcome"] in {"succeeded", "reused"} else "failed")
             receipt.update(finished_at=utc_now(), seconds=now - state["started"])
             receipt["assemblies"].sort(key=lambda row: row["name"])
-            saved = diagnostic(self.atomic_write)(self.receipt, receipt)
+            saved = self.writable and diagnostic(self.atomic_write)(self.receipt, receipt)
             table = [f"{'phase':<26} {'seconds':>10}  outcome"]
             table += [f"{row['name']:<26} {row['seconds']:>10.3f}  {row['outcome']}" for row in receipt["phases"]]
             table += [f"{'total':<26} {receipt['seconds']:>10.3f}  {receipt['outcome']}"]
@@ -230,8 +226,9 @@ class Timing:
     def drain(self):
         flushed = threading.Event()
         self.enqueue(flushed.set)
-        if not flushed.wait(ERROR_WRITE_SECONDS):
-            emit("Warning: capture timing diagnostic flush exceeded its reporting budget")
+        if flushed.wait(ERROR_WRITE_SECONDS):
+            return True
+        emit("Warning: capture timing diagnostic flush exceeded its reporting budget")
 
     @diagnostic
     def finish(self, error=None, outcome=None, announce=False):
@@ -249,11 +246,11 @@ class Timing:
 def supervise_capture(args, timeout):
     from processes import run_process
     options = timing_options(args)
-    timing = Timing(options.output, options.timing_receipt, options.game)
+    timing = Timing(options.output)
     error, outcome = None, "failed"
     try:
-        environment = dict(os.environ, HUMANHOST_CAPTURE_CHILD="1", HUMANHOST_CAPTURE_TIMING=str(timing.pending),
-                           HUMANHOST_CAPTURE_TIMING_STATE=timing.seed, HUMANHOST_CAPTURE_GAME=options.game)
+        environment = dict(os.environ, HUMANHOST_CAPTURE_CHILD="1", HUMANHOST_CAPTURE_TIMING=timing.child_checkpoint() or "",
+                           HUMANHOST_CAPTURE_TIMING_STATE=timing.seed)
         result = run_process(args, timeout=timeout, env=environment, forward=True)
         outcome = "succeeded"
         return result

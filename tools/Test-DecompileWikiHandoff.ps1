@@ -12,7 +12,7 @@ $global:DecompileHandoffCalls = [System.Collections.Generic.List[object]]::new()
 $global:DecompileHandoffFailCall = 0
 $global:DecompileHandoffTimingSupported = $false
 $global:DecompileHandoffThrowHelp = $false
-$global:DecompileHandoffReceipt = Join-Path $repoRoot '.local\runs\capture-20261003T000000Z-123-89abcdef.json'
+$global:DecompileHandoffReceipt = Join-Path $repoRoot '.local\runs\capture-20261003T000000Z-123-89abcdef01234567.json'
 function py {
     $global:DecompileHandoffCalls.Add(@($args))
     $global:LASTEXITCODE = if ($global:DecompileHandoffCalls.Count -eq $global:DecompileHandoffFailCall) { 7 } else { 0 }
@@ -20,7 +20,8 @@ function py {
         if ($global:DecompileHandoffThrowHelp) { throw 'Native help command failed under strict native error handling.' }
         if ($global:DecompileHandoffTimingSupported) { 'options: --source --operator-report --capture-timing PATH' }
         else { 'options: --source --operator-report' }
-    } elseif ($global:DecompileHandoffCalls.Count -eq 1) {
+    } elseif ($global:DecompileHandoffCalls.Count -eq 1 -and $global:DecompileHandoffReceipt) {
+        'Synthetic capture progress before the timing receipt.'
         "CAPTURE_TIMING_RECEIPT=$global:DecompileHandoffReceipt"
     }
 }
@@ -31,7 +32,7 @@ function Run-Case([hashtable]$Extra, [int]$ExpectedCalls, [string]$ExpectedError
     $global:DecompileHandoffCalls.Clear()
     $caught = ''
     try {
-        & (Join-Path $PSScriptRoot 'Decompile-GameCode.ps1') -GameDir $game -WikiPath $wiki -OutputPath (Join-Path $fixture 'source output') @Extra
+        & (Join-Path $PSScriptRoot 'Decompile-GameCode.ps1') -GameDir $game -WikiPath $wiki -OutputPath (Join-Path $fixture 'source output') -PythonPackagesPath (Join-Path $fixture 'python packages') @Extra
     } catch { $caught = $_.Exception.Message }
     Assert-True ($global:DecompileHandoffCalls.Count -eq $ExpectedCalls) "Expected $ExpectedCalls calls, received $($global:DecompileHandoffCalls.Count). Error: $caught"
     if ($ExpectedError) { Assert-True ($caught -like "*$ExpectedError*") "Unexpected failure: $caught" }
@@ -50,13 +51,17 @@ function Run-Case([hashtable]$Extra, [int]$ExpectedCalls, [string]$ExpectedError
     Assert-True ($captureArgs[1] -eq (Join-Path $PSScriptRoot 'game_catalog\refresh.py')) 'Capture must run first.'
     Assert-True ($captureArgs[2] -eq '--game' -and $captureArgs[3] -eq $game) 'Wrong capture game path.'
     Assert-True ($captureArgs[4] -eq '--output' -and $captureArgs[5] -eq (Join-Path $fixture 'source output')) 'Capture output path with spaces was not preserved.'
-    Assert-True ([array]::IndexOf($captureArgs, '--timing-receipt') -eq -1) 'The caller must not generate receipt names.'
+    $expectedCapture = @('-3', (Join-Path $PSScriptRoot 'game_catalog\refresh.py'), '--game', $game,
+        '--output', (Join-Path $fixture 'source output'), '--workers', '4', '--python-packages', (Join-Path $fixture 'python packages'))
+    if ($Extra.Assemblies) { $expectedCapture += '--assemblies'; $expectedCapture += $Extra.Assemblies }
+    if ($Extra.NoGit) { $expectedCapture += '--no-git' }
+    Assert-True (($captureArgs -join '|') -eq ($expectedCapture -join '|')) 'Capture arguments must not choose receipt or checkpoint paths.'
     $receiptPath = $global:DecompileHandoffReceipt
     if ($ExpectedCalls -eq 3) {
         $helpArgs = $global:DecompileHandoffCalls[1][4..($global:DecompileHandoffCalls[1].Count - 1)]
         Assert-True (($helpArgs -join '|') -eq (@('-3', (Join-Path $wiki 'wiki.py'), 'update', '--help') -join '|')) 'Wrong wiki capability probe.'
         $wikiArgs = $global:DecompileHandoffCalls[2][4..($global:DecompileHandoffCalls[2].Count - 1)]
-        $supportsTiming = $global:DecompileHandoffTimingSupported -and $global:DecompileHandoffFailCall -ne 2 -and -not $global:DecompileHandoffThrowHelp
+        $supportsTiming = $global:DecompileHandoffTimingSupported -and $global:DecompileHandoffFailCall -ne 2 -and -not $global:DecompileHandoffThrowHelp -and $receiptPath
         $argumentCount = if ($supportsTiming) { 8 } else { 6 }
         Assert-True ($wikiArgs.Count -eq $argumentCount -and $wikiArgs[0] -eq '-3') 'Wrong inner wiki command shape.'
         Assert-True ($wikiArgs[1] -eq (Join-Path $wiki 'wiki.py')) 'Wrong wiki entrypoint.'
@@ -74,6 +79,10 @@ try {
     $global:DecompileHandoffTimingSupported = $true
     Run-Case @{} 3
     Run-Case @{} 3 # unchanged capture also exits zero and follows the same handoff
+    $savedReceipt = $global:DecompileHandoffReceipt
+    $global:DecompileHandoffReceipt = $null
+    Run-Case @{} 3 # unavailable diagnostics must not prevent the wiki handoff
+    $global:DecompileHandoffReceipt = $savedReceipt
     Run-Case @{SkipWiki = $true} 1
     Run-Case @{NoGit = $true} 1
     Run-Case @{Assemblies = @('Player')} 1
@@ -90,7 +99,7 @@ try {
     Run-Case @{} 3 'wiki update failed'
     $global:DecompileHandoffFailCall = 1
     Run-Case @{SkipWiki = $true} 1 'Game codebase refresh failed (exit 7).'
-    Write-Host 'Decompile/wiki handoff: 11 cases passed.'
+    Write-Host 'Decompile/wiki handoff: 12 cases passed.'
 } finally {
     # The fixture has no Git objects or protected files. Bound its exact path.
     $resolved = [System.IO.Path]::GetFullPath($fixture)

@@ -12,7 +12,7 @@ import sys
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from processes import run_process, GIT_SECONDS, PROBE_SECONDS, ASSEMBLY_SECONDS, CAPTURE_SECONDS
-from timing import Timing, short_error, supervise_capture, timing_parser, timing_options, receipt_directory, cli_error
+from timing import Timing, short_error, supervise_capture, timing_options, cli_error
 
 FRAMEWORK = re.compile(r"^(System(?:\.|$)|Mono(?:\.|$)|mscorlib$|netstandard$|Microsoft\.|UnityEngine)")
 
@@ -193,7 +193,7 @@ def main(timing=None):
     owned = timing is None
     if owned:
         options = timing_options()
-        timing = Timing(options.output, options.timing_receipt, options.game)
+        timing = Timing(options.output)
     error = None
     try:
         capture(timing)
@@ -209,7 +209,7 @@ def main(timing=None):
 
 
 def capture(timing):
-    parser = argparse.ArgumentParser(description=__doc__, parents=[timing_parser()], allow_abbrev=False)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--game", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--python-packages", type=Path)
@@ -217,7 +217,6 @@ def capture(timing):
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--no-git", action="store_true")
     options = parser.parse_args()
-    receipt_directory(options.timing_receipt, options.output, options.game)
     if options.python_packages:
         sys.path.insert(0, str(options.python_packages.resolve()))
     game, output = options.game.resolve(), options.output.resolve()
