@@ -7,6 +7,8 @@ It does not export image, mesh, audio, video, or other bulk engine payloads.
 
 ## Setup and refresh
 
+Follow the [game-update runbook](RUNBOOK-game-update.md) for the ordered capture, local release, review, publication and recovery steps.
+
 Requirements: PowerShell 7, Python 3.13, Git, ilspycmd 11+, and its .NET runtime.
 Install the Python dependencies in an isolated directory:
 
@@ -26,9 +28,10 @@ After a successful full capture, the command runs the independent
 also follows this handoff. The wiki reads selected facts and evidence in place;
 raw code and whole catalogs are not copied into wiki content. Supported wiki work
 finishes before the operator receives its grouped unresolved-content report.
-Execution failures are reported separately. The configured wiki now creates a
-coordinated Git release and publishes supported content to GitHub Pages, verifying
-topic sites before advancing the hub. Gameplay coverage and verification remain
+Execution failures are reported separately. The configured wiki creates a
+coordinated local Git release and completes retention. Publication is a separate
+operator command after review, merge, CI and a fresh successful rehearsal.
+See [publication](../HumanHostWiki/docs/PUBLICATION.md). Gameplay coverage and verification remain
 incomplete and are labeled in the reader.
 See [wiki workflow](../HumanHostWiki/docs/WORKFLOW.md).
 

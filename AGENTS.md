@@ -36,6 +36,8 @@ separate Git repositories and do not synchronize automatically.
 
 ## Game facts (verify before relying on them)
 
+Follow the [game-update runbook](docs/RUNBOOK-game-update.md) from detection through wiki publication and cleanup.
+
 The game is in early access and updates often. Read the current game version and
 Steam build from the latest successful or reused capture receipt in `.local/runs/`
 (`game.version` / `game.build`) or `HumanHostCodebase/BUILD_INFO.md`. Audit the
