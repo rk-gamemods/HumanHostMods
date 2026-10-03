@@ -7,7 +7,8 @@
 - Scrap failed publication runs. Never resume or salvage them. Local update stages and capture rollback have their own recovery rules below.
 - Never push decompiled game code, game DLLs or raw catalogs anywhere. The capture repository stays local with no remote.
 
-Start in HumanHostMods. Wiki commands run from its independent `HumanHostWiki/` checkout.
+Start in HumanHostMods and record its path with `$mods = (Get-Location).Path`.
+Wiki commands run from its independent `HumanHostWiki/` checkout.
 Read its [instructions](../HumanHostWiki/AGENTS.md) and [workflow](../HumanHostWiki/docs/WORKFLOW.md).
 Use PowerShell 7 and the dependencies in [capture setup](GAME_CODEBASE.md#setup-and-refresh).
 Resolve existing work in each owning repository. Do not bypass dirty-state checks or discard unknown files.
@@ -130,10 +131,11 @@ Present grouped content and article exceptions for direction. Keep execution
 failures, unavailable providers and retention issues separate. Decide whether
 the explicit gaps are acceptable for publication; successful stages alone do not
 prove gameplay verification. If corrections are needed, make, review and commit
-them in their owning child repositories. Then adopt the reviewed child commits
-with `py -3 wiki.py lock`, rerun the update, and select the resulting release.
-Without the lock, update rejects the stale checkout lock. See
-[curated changes](../HumanHostWiki/docs/CURATED.md).
+them in their owning repositories. Identity corrections and extraction rules
+belong in the umbrella; curated content belongs in its child repository. When
+reviewed child commits change, adopt them with `py -3 wiki.py lock` before the
+update, or update rejects the stale checkout lock. Then rerun the update and
+select the resulting release. See [curated changes](../HumanHostWiki/docs/CURATED.md).
 Review and merge umbrella changes, use main at fetched origin/main, and wait for
 CI on that exact merged commit before rehearsal. See
 [operator report](../HumanHostWiki/docs/PIPELINE.md#operator-report) and
@@ -237,7 +239,7 @@ From HumanHostWiki, check local operational state:
 ```powershell
 py -3 wiki.py status
 git status --short
-git -C .. status --short
+git -C $mods status --short
 Get-ChildItem .local/publication, .local/releases, .local/reader-retention -ErrorAction SilentlyContinue
 Get-Content .local/publication/pending.json, .local/releases/pending.json -ErrorAction SilentlyContinue
 Get-Content .local/writer.lock.owner.json, .local/publication/rehearsal-temp.json -ErrorAction SilentlyContinue
