@@ -45,6 +45,28 @@ An existing output without a local Git baseline cannot be overwritten; use a
 new path for another `-NoGit` export. Outputs inside the workspace must be
 gitignored, such as `HumanHostCodebase` or a path under `.local`.
 
+## Timing receipt
+
+Every capture writes an atomic JSON receipt under the workspace root at
+`.local/runs/capture-<UTC yyyymmddTHHMMSSZ>-<pid>.json`, including failures,
+deadlines and unchanged-input reuse. Schema `humanhost.capture-timing.v1` has
+UTC `started_at` and `finished_at` strings ending in `Z`, total `seconds`,
+`outcome` (`succeeded`, `failed` or `reused`), a short `error` or null,
+`output_path`, `output_commit` (SHA or null), and `game` (a `version` and `build`
+object, with unknown version null, or null before identity is available).
+`phases` and `assemblies` contain `{name, seconds, outcome}` entries; their
+outcomes are `succeeded`, `failed` or `skipped`. Phases are `input hashing/reuse
+check`, `catalog decode`, `decompile`, `Git promotion` and `cleanup`. Assembly
+times include resource-name listing; concurrent times overlap. Unstarted work
+has zero seconds and is skipped; reuse has no assembly entries.
+
+Durations use `time.perf_counter`. The supervising process finalizes timeout
+receipts from an atomic `.pending` checkpoint beside the receipt, then removes
+the checkpoint. It prints an aligned phase/seconds/outcome table and total to
+stderr. Timing stays in gitignored `.local/`; it never enters generated inputs,
+snapshot hashes or commits. The wiki handoff appends `--capture-timing <path>`
+after `--operator-report` only when `wiki.py update --help` advertises it.
+
 ## What is generated
 
 | Output | Information |

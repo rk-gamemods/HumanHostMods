@@ -32,6 +32,8 @@ from game_version import capture as capture_version
 from UnityPy.helpers.TypeTreeNode import TypeTreeNode
 from UnityPy.helpers.TypeTreeHelper import read_typetree
 from UnityPy.streams import EndianBinaryReader
+from timing import Timing, PHASES, supervise_capture
+import refresh
 
 
 class ProcessTests(unittest.TestCase):
@@ -467,6 +469,109 @@ class SnapshotTests(unittest.TestCase):
             function(path)
         shutil.rmtree(self.temp.name, onexc=retry)
         self.temp.cleanup()
+
+    def timed_capture(self, receipt, failure=None, force=False):
+        game = self.output.parent / "synthetic game"
+        managed = game / "Human Host_Data" / "Managed"
+        managed.mkdir(parents=True, exist_ok=True)
+        (managed / "Player.dll").write_bytes(b"synthetic assembly")
+        (managed / "System.dll").write_bytes(b"synthetic framework")
+        versions = {"UnityPy": "1.25.3", "TypeTreeGeneratorAPI": "0.0.10"}
+        def export(catalog):
+            if failure:
+                raise RuntimeError(failure)
+            catalog.mkdir(parents=True, exist_ok=True)
+            (catalog / "coverage.json").write_text('{"decode_failures": []}')
+            return []
+        def catalog(game, output):
+            return SimpleNamespace(records={"settings": {"id": "bundle#1", "type": "PlayerSettings",
+                                   "fields": {"bundleVersion": "1.2"}}}, files={"bundle": {"source": "Managed/Player.dll"}},
+                                   export=lambda: export(output))
+        def process(args, **kwargs):
+            if "-o" in args:
+                (Path(args[args.index("-o") + 1]) / "synthetic.cs").write_text("// synthetic fixture\n")
+            return SimpleNamespace(returncode=0, stdout="stand-in decompiler\n")
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            stack.enter_context(patch("refresh.sys.argv", ["refresh.py", "--game", str(game), "--output", str(self.output)]))
+            stack.enter_context(patch("refresh.importlib.metadata.version", side_effect=lambda name: versions.get(name, "fixture")))
+            stack.enter_context(patch("refresh.shutil.which", return_value="stand-in"))
+            stack.enter_context(patch("refresh.run_process", side_effect=process))
+            stack.enter_context(patch("catalog.Catalog", side_effect=catalog))
+            stack.enter_context(patch("refresh.sys.stderr", new_callable=io.StringIO))
+            if force:
+                stack.enter_context(patch("refresh.reusable_capture", return_value=False))
+            timing = Timing(self.output, receipt)
+            error = None
+            try:
+                refresh.main(timing)
+            except BaseException as exc:
+                error = exc
+                raise
+            finally:
+                timing.finish(error)
+                self.assertIn("total", sys.stderr.getvalue())
+
+    def assert_receipt(self, path, outcome, phases):
+        receipt = json.loads(path.read_text())
+        self.assertEqual(receipt["schema"], "humanhost.capture-timing.v1")
+        self.assertEqual(receipt["outcome"], outcome)
+        self.assertEqual([row["name"] for row in receipt["phases"]], list(PHASES))
+        self.assertEqual([row["outcome"] for row in receipt["phases"]], phases)
+        self.assertTrue(receipt["started_at"].endswith("Z") and receipt["finished_at"].endswith("Z"))
+        self.assertGreater(receipt["seconds"], 0)
+        self.assertTrue(all(row["seconds"] >= 0 for row in receipt["phases"] + receipt["assemblies"]))
+        self.assertFalse(path.with_suffix(".pending").exists())
+        self.assertFalse(path.with_suffix(".json.tmp").exists())
+        return receipt
+
+    def test_timing_success_reuse_and_forced_repeat_preserve_snapshot_identity(self):
+        first = self.output.parent / "first.json"
+        self.timed_capture(first)
+        receipt = self.assert_receipt(first, "succeeded", ["succeeded"] * 5)
+        self.assertIsNone(receipt["error"])
+        self.assertEqual(receipt["game"], {"version": "1.2", "build": "unknown"})
+        self.assertEqual([(row["name"], row["outcome"]) for row in receipt["assemblies"]],
+                         [("Player.dll", "succeeded"), ("System.dll", "skipped")])
+        head = git(self.output, "rev-parse", "HEAD").stdout.strip()
+        tree = git(self.output, "rev-parse", "HEAD^{tree}").stdout.strip()
+        from snapshot import file_tree
+        files = file_tree(self.output)
+        self.assertEqual(receipt["output_commit"], head)
+        reuse = self.output.parent / "reuse.json"
+        self.timed_capture(reuse)
+        reused = self.assert_receipt(reuse, "reused", ["succeeded", "skipped", "skipped", "skipped", "succeeded"])
+        self.assertEqual(reused["output_commit"], head)
+        self.assertEqual(reused["assemblies"], [])
+        repeat = self.output.parent / "repeat.json"
+        self.timed_capture(repeat, force=True)
+        repeated = self.assert_receipt(repeat, "succeeded", ["succeeded"] * 5)
+        self.assertNotEqual(receipt["started_at"], repeated["started_at"])
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout.strip(), head)
+        self.assertEqual(git(self.output, "rev-parse", "HEAD^{tree}").stdout.strip(), tree)
+        self.assertEqual(file_tree(self.output), files)
+        self.assertEqual(git(self.output, "status", "--porcelain").stdout.strip(), "")
+        self.assertFalse(any("capture-timing" in path.read_text(encoding="utf-8") for path in self.output.rglob("*.json")))
+
+    def test_timing_failure_preserves_snapshot_and_records_cleanup(self):
+        path = self.output.parent / "failure.json"
+        with self.assertRaisesRegex(RuntimeError, "synthetic decoding failure"):
+            self.timed_capture(path, failure="synthetic decoding failure")
+        receipt = self.assert_receipt(path, "failed", ["succeeded", "failed", "skipped", "skipped", "succeeded"])
+        self.assertEqual(receipt["error"], "synthetic decoding failure")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+
+    def test_timing_supervisor_finalizes_timeout_checkpoint(self):
+        receipt = self.output.parent / "timeout.json"
+        code = ("import os,sys,time; "
+                f"sys.path.insert(0, {str(Path(__file__).parent)!r}); "
+                "from timing import Timing; t=Timing.resume(os.environ['HUMANHOST_CAPTURE_TIMING']); "
+                "phase=t.measure('catalog decode'); phase.__enter__(); time.sleep(60)")
+        with patch("timing.sys.stderr", new_callable=io.StringIO), self.assertRaisesRegex(RuntimeError, "deadline exceeded"):
+            supervise_capture([sys.executable, "-c", code, "--timing-receipt", str(receipt)], 2)
+        result = self.assert_receipt(receipt, "failed", ["skipped", "failed", "skipped", "skipped", "skipped"])
+        self.assertIn("deadline exceeded", result["error"])
+        self.assertGreater(result["phases"][1]["seconds"], 0)
 
     def test_generation_failure_preserves_previous_snapshot(self):
         with self.assertRaisesRegex(RuntimeError, "generation failed"):
