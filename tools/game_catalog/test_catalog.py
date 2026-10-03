@@ -300,7 +300,7 @@ class SnapshotTests(unittest.TestCase):
         previous = os.getcwd()
         os.chdir(self.output / ".git")
         try:
-            with self.assertRaisesRegex(RuntimeError, "Another process holds"):
+            with self.assertRaisesRegex(RuntimeError, "Windows denied renaming .* another process holds"):
                 with Snapshot(self.output) as snapshot:
                     self.fail("Generation started although publication cannot replace the output")
         finally:
@@ -309,6 +309,34 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
         self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
         self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+
+    def interrupt_probe(self):
+        # Simulate a crash after the probe's forward rename, before the rename back.
+        snapshot = Snapshot(self.output)
+        snapshot.write_journal({"output": str(self.output), "phase": "staging", "head": self.head.strip(), "existed": True})
+        os.replace(self.output, snapshot.backup)
+        return snapshot
+
+    def test_interrupted_probe_restores_the_snapshot(self):
+        snapshot = self.interrupt_probe()
+        with Snapshot(self.output):
+            pass
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+        self.assertFalse(snapshot.backup.exists() or snapshot.journal.exists())
+
+    def test_interrupted_probe_never_discards_a_recreated_output(self):
+        snapshot = self.interrupt_probe()
+        self.output.mkdir()
+        (self.output / "BUILD_INFO.md").write_text("recreated")
+        git(self.output, "init", "--quiet")
+        git(self.output, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "add", "-A")
+        git(self.output, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "other")
+        with self.assertRaisesRegex(RuntimeError, "both exist"):
+            with Snapshot(self.output):
+                self.fail("Recovery accepted an ambiguous interrupted probe")
+        self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "recreated")
 
     def test_dirty_snapshot_is_preserved(self):
         (self.output / "notes.txt").write_text("user work")

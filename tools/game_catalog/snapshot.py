@@ -46,9 +46,9 @@ class Snapshot:
             os.replace(self.output, self.backup)
         except PermissionError as exc:
             raise RuntimeError(
-                f"Another process holds a file or directory open inside {self.output}, so it cannot be "
-                "replaced. A common cause is an editor's Git integration watching its .git folder. "
-                "Close that repository or program, then rerun.") from exc
+                f"Windows denied renaming {self.output}. Usually another process holds a file or directory "
+                "open inside it, such as an editor's Git integration watching its .git folder; close that "
+                "repository or program, then rerun. Otherwise check that this account may rename it.") from exc
 
     def write_journal(self, data):
         temporary = self.journal.with_suffix(".tmp")
@@ -66,8 +66,15 @@ class Snapshot:
         state = json.loads(self.journal.read_text(encoding="utf-8"))
         if state["output"] != str(self.output):
             raise RuntimeError("Snapshot journal belongs to a different output path")
+        if state["phase"] == "staging" and self.backup.exists():
+            # Only the publication probe moves the output before publishing, so this
+            # backup is the original snapshot. Never infer a commit from it.
+            if self.output.exists():
+                raise RuntimeError(f"{self.output} and {self.backup} both exist after an interrupted probe; "
+                                   "inspect both before retrying.")
+            os.replace(self.backup, self.output)
         committed = state["phase"] == "committed"
-        if not committed and (self.output / ".git").exists() and state.get("head"):
+        if not committed and state["phase"] == "publishing" and (self.output / ".git").exists() and state.get("head"):
             head = git(self.output, "rev-parse", "HEAD", check=False).stdout.strip()
             committed = head != state["head"] and not git(self.output, "status", "--porcelain").stdout.strip()
         if self.backup.exists() and not committed:
