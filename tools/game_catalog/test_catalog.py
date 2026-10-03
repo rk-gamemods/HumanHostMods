@@ -448,7 +448,8 @@ class DataTests(unittest.TestCase):
 class SnapshotTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="hhmods-capture-snapshot-test-")
-        self.output = Path(self.temp.name) / "code"
+        # Canonical form: Windows runners hand out 8.3 short temp paths.
+        self.output = Path(os.path.realpath(self.temp.name)) / "code"
         self.output.mkdir()
         (self.output / "BUILD_INFO.md").write_text("old")
         git(self.output, "init", "--quiet")
