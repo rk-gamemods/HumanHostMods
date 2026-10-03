@@ -70,13 +70,18 @@ See [capture receipts](GAME_CODEBASE.md#timing-receipt) and
 
 ## 3. Complete the local wiki release
 
-The wrapper already ran this step. To recover wiki processing against the existing
-full capture, enter the wiki and rerun the same update command:
+The wrapper already ran the update. Enter the wiki checkout for every remaining step.
+Use the `-WikiPath` checkout if capture selected one. Then read the run's timing:
 
 ```powershell
 Set-Location HumanHostWiki
-py -3 wiki.py update --operator-report
 py -3 wiki.py timing --last 5
+```
+
+Only if the wrapper's wiki handoff failed, rerun the same update against the existing capture:
+
+```powershell
+py -3 wiki.py update --operator-report
 ```
 
 If capture used a nondefault source, preserve its `--source <path>` on the retry.
@@ -124,8 +129,11 @@ Follow [release review](../HumanHostWiki/docs/RELEASE.md#validation-and-preview)
 Present grouped content and article exceptions for direction. Keep execution
 failures, unavailable providers and retention issues separate. Decide whether
 the explicit gaps are acceptable for publication; successful stages alone do not
-prove gameplay verification. If corrections are needed, make and review them in
-their owning repositories, rerun the update, and select the resulting release.
+prove gameplay verification. If corrections are needed, make, review and commit
+them in their owning child repositories. Then adopt the reviewed child commits
+with `py -3 wiki.py lock`, rerun the update, and select the resulting release.
+Without the lock, update rejects the stale checkout lock. See
+[curated changes](../HumanHostWiki/docs/CURATED.md).
 Review and merge umbrella changes, use main at fetched origin/main, and wait for
 CI on that exact merged commit before rehearsal. See
 [operator report](../HumanHostWiki/docs/PIPELINE.md#operator-report) and
@@ -204,8 +212,9 @@ cross-topic navigation. Include any allocated storage or successor sites beyond
 the 13 logical sites. Browser review creates no timing receipt.
 If a site serves the wrong release or bytes, retain evidence and diagnose under
 [publication verification](../HumanHostWiki/docs/PUBLICATION.md). Do not declare
-success or manually advance the hub. An unchanged repeat of the publish command
-passes the gate again and checks current refs and reader pointers.
+success or manually advance the hub. Publishing moves the refs its rehearsal
+receipt recorded, so a repeat publish needs a fresh rehearsal against the
+post-publication state first.
 
 ## 8. Recover failures
 
@@ -227,6 +236,8 @@ From HumanHostWiki, check local operational state:
 
 ```powershell
 py -3 wiki.py status
+git status --short
+git -C .. status --short
 Get-ChildItem .local/publication, .local/releases, .local/reader-retention -ErrorAction SilentlyContinue
 Get-Content .local/publication/pending.json, .local/releases/pending.json -ErrorAction SilentlyContinue
 Get-Content .local/writer.lock.owner.json, .local/publication/rehearsal-temp.json -ErrorAction SilentlyContinue
@@ -238,7 +249,9 @@ No incomplete release/publication transaction, active writer, preview server,
 owned child process or rehearsal temp root may remain. A saved publication
 journal with `phase: complete` is completion evidence, not pending work. Persistent
 OS lock files are normal; do not delete them to bypass a writer. Confirm any
-reported process belongs to this run before stopping it.
+reported process belongs to this run before stopping it. Both Git status checks
+must be empty, or every listed change must belong to reviewed work that still
+has to land through a pull request.
 
 Check the capture's reported sibling `.catalog-stage`, `.catalog-backup` and `.catalog-journal.json` paths.
 Resolve leftover capture temporaries, rehearsal roots and retention links through their owners.
