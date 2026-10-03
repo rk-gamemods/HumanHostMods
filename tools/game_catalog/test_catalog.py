@@ -32,7 +32,8 @@ from game_version import capture as capture_version
 from UnityPy.helpers.TypeTreeNode import TypeTreeNode
 from UnityPy.helpers.TypeTreeHelper import read_typetree
 from UnityPy.streams import EndianBinaryReader
-from timing import Timing, PHASES, supervise_capture
+from timing import Timing, PHASES, RUNS
+from test_timing import TimingTests
 import refresh
 
 
@@ -471,6 +472,11 @@ class SnapshotTests(unittest.TestCase):
         self.temp.cleanup()
 
     def timed_capture(self, receipt, failure=None, force=False):
+        if not hasattr(self, "timing_directory"):
+            RUNS.mkdir(parents=True, exist_ok=True)
+            self.timing_directory = tempfile.TemporaryDirectory(prefix="catalog-timing-test-", dir=RUNS)
+            self.addCleanup(self.timing_directory.cleanup)
+        receipt = Path(self.timing_directory.name) / receipt.name
         game = self.output.parent / "synthetic game"
         managed = game / "Human Host_Data" / "Managed"
         managed.mkdir(parents=True, exist_ok=True)
@@ -502,6 +508,7 @@ class SnapshotTests(unittest.TestCase):
             if force:
                 stack.enter_context(patch("refresh.reusable_capture", return_value=False))
             timing = Timing(self.output, receipt)
+            self.last_timing_receipt = timing.receipt
             error = None
             try:
                 refresh.main(timing)
@@ -511,6 +518,7 @@ class SnapshotTests(unittest.TestCase):
             finally:
                 timing.finish(error)
                 self.assertIn("total", sys.stderr.getvalue())
+        return timing.receipt
 
     def assert_receipt(self, path, outcome, phases):
         receipt = json.loads(path.read_text())
@@ -527,7 +535,7 @@ class SnapshotTests(unittest.TestCase):
 
     def test_timing_success_reuse_and_forced_repeat_preserve_snapshot_identity(self):
         first = self.output.parent / "first.json"
-        self.timed_capture(first)
+        first = self.timed_capture(first)
         receipt = self.assert_receipt(first, "succeeded", ["succeeded"] * 5)
         self.assertIsNone(receipt["error"])
         self.assertEqual(receipt["game"], {"version": "1.2", "build": "unknown"})
@@ -538,13 +546,14 @@ class SnapshotTests(unittest.TestCase):
         from snapshot import file_tree
         files = file_tree(self.output)
         self.assertEqual(receipt["output_commit"], head)
+        self.assertNotIn("game_catalog/timing.py", json.loads((self.output / "Catalog" / "generator.json").read_text())["tools"])
         reuse = self.output.parent / "reuse.json"
-        self.timed_capture(reuse)
+        reuse = self.timed_capture(reuse)
         reused = self.assert_receipt(reuse, "reused", ["succeeded", "skipped", "skipped", "skipped", "succeeded"])
         self.assertEqual(reused["output_commit"], head)
         self.assertEqual(reused["assemblies"], [])
         repeat = self.output.parent / "repeat.json"
-        self.timed_capture(repeat, force=True)
+        repeat = self.timed_capture(repeat, force=True)
         repeated = self.assert_receipt(repeat, "succeeded", ["succeeded"] * 5)
         self.assertNotEqual(receipt["started_at"], repeated["started_at"])
         self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout.strip(), head)
@@ -557,21 +566,10 @@ class SnapshotTests(unittest.TestCase):
         path = self.output.parent / "failure.json"
         with self.assertRaisesRegex(RuntimeError, "synthetic decoding failure"):
             self.timed_capture(path, failure="synthetic decoding failure")
+        path = self.last_timing_receipt
         receipt = self.assert_receipt(path, "failed", ["succeeded", "failed", "skipped", "skipped", "succeeded"])
         self.assertEqual(receipt["error"], "synthetic decoding failure")
         self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
-
-    def test_timing_supervisor_finalizes_timeout_checkpoint(self):
-        receipt = self.output.parent / "timeout.json"
-        code = ("import os,sys,time; "
-                f"sys.path.insert(0, {str(Path(__file__).parent)!r}); "
-                "from timing import Timing; t=Timing.resume(os.environ['HUMANHOST_CAPTURE_TIMING']); "
-                "phase=t.measure('catalog decode'); phase.__enter__(); time.sleep(60)")
-        with patch("timing.sys.stderr", new_callable=io.StringIO), self.assertRaisesRegex(RuntimeError, "deadline exceeded"):
-            supervise_capture([sys.executable, "-c", code, "--timing-receipt", str(receipt)], 2)
-        result = self.assert_receipt(receipt, "failed", ["skipped", "failed", "skipped", "skipped", "skipped"])
-        self.assertIn("deadline exceeded", result["error"])
-        self.assertGreater(result["phases"][1]["seconds"], 0)
 
     def test_generation_failure_preserves_previous_snapshot(self):
         with self.assertRaisesRegex(RuntimeError, "generation failed"):

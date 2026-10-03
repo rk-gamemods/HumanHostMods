@@ -11,8 +11,8 @@ import threading
 import sys
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from processes import run_process, GIT_SECONDS, PROBE_SECONDS, ASSEMBLY_SECONDS, CAPTURE_SECONDS, ERROR_WRITE_SECONDS
-from timing import Timing, short_error, supervise_capture
+from processes import run_process, GIT_SECONDS, PROBE_SECONDS, ASSEMBLY_SECONDS, CAPTURE_SECONDS
+from timing import Timing, short_error, supervise_capture, timing_parser, receipt_directory, cli_error
 
 FRAMEWORK = re.compile(r"^(System(?:\.|$)|Mono(?:\.|$)|mscorlib$|netstandard$|Microsoft\.|UnityEngine)")
 
@@ -29,6 +29,10 @@ def tool_digest(path):
     # Git may convert PowerShell sources to CRLF on checkout. This is not a
     # generator behavior change and must not create a different snapshot.
     return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def generator_tools(script_root):
+    return sorted(p for p in script_root.glob("*.py") if not p.name.startswith("test_") and p.name != "timing.py") + [script_root.parent / "Decompile-GameCode.ps1", script_root.parent / "Read-GameBundle.ps1", script_root / "requirements.txt"]
 
 
 def steam_identity(game):
@@ -187,7 +191,11 @@ def timed_snapshot(output, no_git, timing):
 
 def main(timing=None):
     owned = timing is None
-    timing = timing or Timing()
+    if owned:
+        parser = timing_parser()
+        parser.add_argument("--output", default="")
+        options, _ = parser.parse_known_args()
+        timing = Timing(options.output, options.timing_receipt)
     error = None
     try:
         capture(timing)
@@ -198,18 +206,20 @@ def main(timing=None):
     finally:
         if owned:
             timing.finish(error)
+        else:
+            timing.drain()
 
 
 def capture(timing):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, parents=[timing_parser()], allow_abbrev=False)
     parser.add_argument("--game", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--python-packages", type=Path)
     parser.add_argument("--assemblies", nargs="*")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--no-git", action="store_true")
-    parser.add_argument("--timing-receipt", type=Path)
     options = parser.parse_args()
+    receipt_directory(options.timing_receipt, options.output)
     if options.python_packages:
         sys.path.insert(0, str(options.python_packages.resolve()))
     game, output = options.game.resolve(), options.output.resolve()
@@ -238,7 +248,7 @@ def capture(timing):
         stage = snapshot.stage
         with timing.measure("input hashing/reuse check"):
             script_root = Path(__file__).resolve().parent
-            tool_files = sorted(p for p in script_root.glob("*.py") if not p.name.startswith("test_")) + [script_root.parent / "Decompile-GameCode.ps1", script_root.parent / "Read-GameBundle.ps1", script_root / "requirements.txt"]
+            tool_files = generator_tools(script_root)
             tool_hashes = {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}
             generator = {"schema": 1, "packages": versions, "python": sys.version.split()[0],
                          "decompiler": decompiler, "tool_hash_normalization": "CRLF to LF", "tools": tool_hashes}
@@ -315,13 +325,14 @@ def capture(timing):
 if __name__ == "__main__":
     # Supervise even direct CLI use, including in-process decoder stalls.
     if os.environ.get("HUMANHOST_CAPTURE_CHILD") == "1":
-        main(Timing.resume(os.environ["HUMANHOST_CAPTURE_TIMING"]))
+        try:
+            main(Timing.resume(os.environ["HUMANHOST_CAPTURE_TIMING"]))
+        except Exception as exc:
+            cli_error(exc)
+        os._exit(0)
     else:
         try:
             supervise_capture([sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]], CAPTURE_SECONDS)
-        except RuntimeError as exc:
-            # A failed supervisor may have blocked daemon output writers.
-            reporter = threading.Thread(target=print, args=(str(exc),), kwargs={"file": sys.stderr, "flush": True}, daemon=True)
-            reporter.start()
-            reporter.join(ERROR_WRITE_SECONDS)
-            os._exit(1)
+        except Exception as exc:
+            cli_error(exc)
+        os._exit(0)

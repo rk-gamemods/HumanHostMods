@@ -48,7 +48,7 @@ gitignored, such as `HumanHostCodebase` or a path under `.local`.
 ## Timing receipt
 
 Every capture writes an atomic JSON receipt under the workspace root at
-`.local/runs/capture-<UTC yyyymmddTHHMMSSZ>-<pid>.json`, including failures,
+`.local/runs/capture-<UTC yyyymmddTHHMMSSZ>-<pid>-<8 hex run id>.json`, including failures,
 deadlines and unchanged-input reuse. Schema `humanhost.capture-timing.v1` has
 UTC `started_at` and `finished_at` strings ending in `Z`, total `seconds`,
 `outcome` (`succeeded`, `failed` or `reused`), a short `error` or null,
@@ -64,7 +64,16 @@ Durations use `time.perf_counter`. The supervising process finalizes timeout
 receipts from an atomic `.pending` checkpoint beside the receipt, then removes
 the checkpoint. It prints an aligned phase/seconds/outcome table and total to
 stderr. Timing stays in gitignored `.local/`; it never enters generated inputs,
-snapshot hashes or commits. The wiki handoff appends `--capture-timing <path>`
+snapshot hashes or commits. `timing.py` is excluded from the generator/tool
+provenance hashes because it does not affect generated outputs. Timing generates
+the random run id and reserves receipt/checkpoint names exclusively; an existing
+file is never overwritten. `--timing-receipt <path>` (also `--timing-receipt=<path>`)
+selects a parent directory inside `.local/runs/`; timing still generates the
+filename. Paths outside that directory are usage errors rejected before writes.
+Receipt/checkpoint I/O runs in a background worker with a bounded final flush.
+Diagnostic failures emit a warning and preserve capture success, failure or
+timeout, even when no receipt can be saved. Timing reports the generated path to
+the wrapper only after saving the receipt. The wiki handoff appends `--capture-timing <path>`
 after `--operator-report` only when `wiki.py update --help` advertises it.
 
 ## What is generated

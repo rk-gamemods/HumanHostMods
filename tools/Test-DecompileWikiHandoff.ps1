@@ -11,12 +11,17 @@ Set-Content -LiteralPath (Join-Path $wiki 'wiki.py') -Value ''
 $global:DecompileHandoffCalls = [System.Collections.Generic.List[object]]::new()
 $global:DecompileHandoffFailCall = 0
 $global:DecompileHandoffTimingSupported = $false
+$global:DecompileHandoffThrowHelp = $false
+$global:DecompileHandoffReceipt = Join-Path $repoRoot '.local\runs\capture-20261003T000000Z-123-89abcdef.json'
 function py {
     $global:DecompileHandoffCalls.Add(@($args))
     $global:LASTEXITCODE = if ($global:DecompileHandoffCalls.Count -eq $global:DecompileHandoffFailCall) { 7 } else { 0 }
     if ($args[-1] -eq '--help') {
+        if ($global:DecompileHandoffThrowHelp) { throw 'Native help command failed under strict native error handling.' }
         if ($global:DecompileHandoffTimingSupported) { 'options: --source --operator-report --capture-timing PATH' }
         else { 'options: --source --operator-report' }
+    } elseif ($global:DecompileHandoffCalls.Count -eq 1) {
+        "CAPTURE_TIMING_RECEIPT=$global:DecompileHandoffReceipt"
     }
 }
 function Assert-True([bool]$Value, [string]$Message) {
@@ -45,15 +50,13 @@ function Run-Case([hashtable]$Extra, [int]$ExpectedCalls, [string]$ExpectedError
     Assert-True ($captureArgs[1] -eq (Join-Path $PSScriptRoot 'game_catalog\refresh.py')) 'Capture must run first.'
     Assert-True ($captureArgs[2] -eq '--game' -and $captureArgs[3] -eq $game) 'Wrong capture game path.'
     Assert-True ($captureArgs[4] -eq '--output' -and $captureArgs[5] -eq (Join-Path $fixture 'source output')) 'Capture output path with spaces was not preserved.'
-    $receiptIndex = [array]::IndexOf($captureArgs, '--timing-receipt')
-    Assert-True ($receiptIndex -ge 0) 'Capture receipt path was not supplied.'
-    $receiptPath = $captureArgs[$receiptIndex + 1]
-    Assert-True ($receiptPath -like (Join-Path $repoRoot ".local\runs\capture-????????T??????Z-$PID.json")) 'Wrong capture receipt location or name.'
+    Assert-True ([array]::IndexOf($captureArgs, '--timing-receipt') -eq -1) 'The caller must not generate receipt names.'
+    $receiptPath = $global:DecompileHandoffReceipt
     if ($ExpectedCalls -eq 3) {
         $helpArgs = $global:DecompileHandoffCalls[1][4..($global:DecompileHandoffCalls[1].Count - 1)]
         Assert-True (($helpArgs -join '|') -eq (@('-3', (Join-Path $wiki 'wiki.py'), 'update', '--help') -join '|')) 'Wrong wiki capability probe.'
         $wikiArgs = $global:DecompileHandoffCalls[2][4..($global:DecompileHandoffCalls[2].Count - 1)]
-        $supportsTiming = $global:DecompileHandoffTimingSupported -and $global:DecompileHandoffFailCall -ne 2
+        $supportsTiming = $global:DecompileHandoffTimingSupported -and $global:DecompileHandoffFailCall -ne 2 -and -not $global:DecompileHandoffThrowHelp
         $argumentCount = if ($supportsTiming) { 8 } else { 6 }
         Assert-True ($wikiArgs.Count -eq $argumentCount -and $wikiArgs[0] -eq '-3') 'Wrong inner wiki command shape.'
         Assert-True ($wikiArgs[1] -eq (Join-Path $wiki 'wiki.py')) 'Wrong wiki entrypoint.'
@@ -78,11 +81,16 @@ try {
     Run-Case @{} 1 'Game codebase refresh failed'
     $global:DecompileHandoffFailCall = 2
     Run-Case @{} 3 # failed help probe omits the new option
+    $global:DecompileHandoffFailCall = 0
+    $global:DecompileHandoffThrowHelp = $true
+    $PSNativeCommandUseErrorActionPreference = $true
+    Run-Case @{} 3 # a throwing native help probe must also omit the option
+    $global:DecompileHandoffThrowHelp = $false
     $global:DecompileHandoffFailCall = 3
     Run-Case @{} 3 'wiki update failed'
     $global:DecompileHandoffFailCall = 1
     Run-Case @{SkipWiki = $true} 1 'Game codebase refresh failed (exit 7).'
-    Write-Host 'Decompile/wiki handoff: 10 cases passed.'
+    Write-Host 'Decompile/wiki handoff: 11 cases passed.'
 } finally {
     # The fixture has no Git objects or protected files. Bound its exact path.
     $resolved = [System.IO.Path]::GetFullPath($fixture)
