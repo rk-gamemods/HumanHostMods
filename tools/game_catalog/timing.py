@@ -1,7 +1,6 @@
 """Best-effort operator diagnostics, outside generated snapshot identities."""
 import argparse
 from contextlib import contextmanager
-import copy
 from datetime import datetime, timezone
 from functools import wraps
 import json
@@ -20,7 +19,6 @@ RUNS = Path(__file__).resolve().parents[2] / ".local" / "runs"
 
 
 def emit(message, stream=None):
-    """A stalled diagnostic consumer must never hold up the caller."""
     def write():
         try:
             print(message, file=stream or sys.stderr, flush=True)
@@ -58,46 +56,48 @@ def timing_parser():
     return parser
 
 
-def receipt_directory(receipt, output=""):
-    # Usage validation is deliberately outside the best-effort diagnostic guard.
-    root = RUNS.absolute()
-    if RUNS.resolve() != root:
-        raise ValueError(f"Timing directory must resolve inside {root}")
-    path = Path(receipt).resolve() if receipt is not None else root / "capture.json"
+def timing_options(args=None):
+    parser = timing_parser()
+    parser.add_argument("--output", default="")
+    parser.add_argument("--game", default="")
+    return parser.parse_known_args(args)[0]
+
+
+def receipt_directory(receipt, output="", game=""):
+    absolute = lambda path: Path(os.path.normcase(os.path.abspath(path)))
+    root = absolute(RUNS)
+    path = absolute(receipt) if receipt is not None else root / "capture.json"
     if path == root or not path.is_relative_to(root):
         raise ValueError(f"Timing receipt must resolve inside {root}")
+    protected = [absolute(game)] if game else []
     if output:
-        snapshot = Path(output).resolve()
-        if path.parent == snapshot or path.parent.is_relative_to(snapshot):
-            raise ValueError("Timing receipt cannot be inside snapshot output")
+        snapshot = absolute(output)
+        protected += [snapshot, snapshot.with_name(snapshot.name + ".catalog-stage"),
+                      snapshot.with_name(snapshot.name + ".catalog-backup")]
+    if any(path.parent.is_relative_to(other) or other.is_relative_to(path.parent) for other in protected):
+        raise ValueError("Timing receipt directory overlaps snapshot output, staging, backup or game inputs")
     return path.parent
 
 
 class Timing:
-    def __init__(self, output="", receipt=None):
-        directory = receipt_directory(receipt, output)
-        self.resumed = False
-        self.announce = False
-        self.run_id = uuid.uuid4().hex[:8]
+    def __init__(self, output="", receipt=None, game=""):
+        directory = receipt_directory(receipt, output, game)  # Usage errors precede all writes.
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        self.receipt = directory / f"capture-{stamp}-{os.getpid()}-{self.run_id}.json"
-        self.pending = self.receipt.with_suffix(".pending")
-        self.state = {"run_id": self.run_id, "owner": os.urandom(16).hex(), "started": time.perf_counter(), "active": {}, "receipt": {
+        self.receipt = directory / f"capture-{stamp}-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
+        self.pending, self.claim = self.receipt.with_suffix(".pending"), self.receipt.with_suffix(".claim")
+        self.state = {"owner": os.urandom(16).hex(), "started": time.perf_counter(), "active": {}, "receipt": {
             "schema": "humanhost.capture-timing.v1", "started_at": utc_now(), "finished_at": None,
             "seconds": 0.0, "outcome": "failed", "error": None, "output_path": str(output),
             "output_commit": None, "game": None,
             "phases": [{"name": name, "seconds": 0.0, "outcome": "skipped"} for name in PHASES],
             "assemblies": []}}
+        self.seed = json.dumps(self.state)
         self.start_worker()
         self.enqueue(self.reserve)
-        self.checkpoint()
 
     @diagnostic
     def start_worker(self):
-        self.lock = threading.Lock()
-        self.tasks = queue.SimpleQueue()
-        self.owned = {}
-        self.reports = []
+        self.tasks, self.reports, self.claim_owned, self.writable = queue.SimpleQueue(), [], False, False
         def work():
             while True:
                 operation, args = self.tasks.get()
@@ -109,75 +109,43 @@ class Timing:
 
     @classmethod
     def resume(cls, pending):
-        # Validation happens before starting a worker or touching any file.
-        receipt_directory(Path(pending).with_suffix(".json"))
         result = cls.__new__(cls)
-        result.resumed = True
-        result.announce = False
         result.pending = Path(pending)
-        result.receipt = result.pending.with_suffix(".json")
-        # The supervisor supplies a fallback even if storage is unavailable.
-        result.run_id = result.pending.stem.rsplit("-", 1)[-1]
-        result.state = diagnostic(json.loads)(os.environ.get("HUMANHOST_CAPTURE_TIMING_STATE", ""))
-        if not result.state:
-            result.state = {"run_id": result.run_id, "started": time.perf_counter(), "active": {}, "receipt": {
-                "schema": "humanhost.capture-timing.v1", "started_at": utc_now(), "finished_at": None,
-                "seconds": 0.0, "outcome": "failed", "error": None, "output_path": "", "output_commit": None,
-                "game": None, "phases": [{"name": name, "seconds": 0.0, "outcome": "skipped"} for name in PHASES],
-                "assemblies": []}}
+        result.receipt, result.claim = result.pending.with_suffix(".json"), result.pending.with_suffix(".claim")
+        result.state = json.loads(os.environ["HUMANHOST_CAPTURE_TIMING_STATE"])
+        receipt_directory(result.receipt, result.state["receipt"]["output_path"],
+                          os.environ.get("HUMANHOST_CAPTURE_GAME", ""))
         result.start_worker()
-        result.enqueue(result.adopt_checkpoint)
         return result
 
     @diagnostic
     def enqueue(self, operation, *args):
         self.tasks.put((operation, args))
 
-    @staticmethod
-    def identity(path):
-        stat = path.stat()
-        return stat.st_dev, stat.st_ino
-
-    @diagnostic
     def reserve(self):
-        self.receipt.parent.mkdir(parents=True, exist_ok=True)
-        # Reserve both names exclusively. A collision never clobbers another run.
-        for path in (self.receipt, self.pending):
-            with path.open("x", encoding="utf-8"):
-                pass
-            self.owned[path] = self.identity(path)
+        self.claim.parent.mkdir(parents=True, exist_ok=True)
+        with self.claim.open("x", encoding="utf-8") as stream:
+            self.claim_owned = True
+            stream.write(self.state["owner"])
+        if self.receipt.exists() or self.pending.exists():
+            raise ValueError("receipt or checkpoint already exists")
+        self.writable = True
+        self.checkpoint()
 
-    @diagnostic
-    def read_checkpoint(self):
-        if not self.resumed and self.pending not in self.owned:
-            raise ValueError("checkpoint name was not reserved by this run")
-        state = json.loads(self.pending.read_text(encoding="utf-8"))
-        if state["run_id"] != self.run_id or state.get("owner") != self.state.get("owner"):
-            raise ValueError("checkpoint belongs to another run")
-        return state
-
-    @diagnostic
-    def adopt_checkpoint(self):
-        if self.read_checkpoint() is not None:
-            self.owned[self.pending] = self.identity(self.pending)
-
-    @diagnostic
     def atomic_write(self, path, value):
-        if self.resumed and path == self.pending and path not in self.owned:
-            # Retry adoption if the child's first update beat the initial checkpoint.
-            self.adopt_checkpoint()
-        if path not in self.owned or self.identity(path) != self.owned[path]:
-            raise ValueError("refusing to replace a file not owned by this run")
+        if self.claim_owned and not self.writable:
+            raise ValueError("reservation failed; existing files must be preserved")
+        if not self.claim_owned and self.claim.read_text(encoding="utf-8") != self.state["owner"]:
+            raise ValueError("claim belongs to another run")
+        if path == self.receipt and (not self.claim_owned or path.exists()):
+            raise ValueError("refusing to overwrite an existing receipt")
         temporary = path.with_suffix(path.suffix + "." + uuid.uuid4().hex + ".tmp")
         created = False
         try:
             with temporary.open("x", encoding="utf-8") as stream:
                 created = True
                 stream.write(json.dumps(value, indent=2) + "\n")
-            if self.identity(path) != self.owned[path]:
-                raise ValueError("refusing to replace a file whose ownership changed")
             os.replace(temporary, path)
-            self.owned[path] = self.identity(path)
             return True
         finally:
             if created:
@@ -185,96 +153,89 @@ class Timing:
 
     @diagnostic
     def checkpoint(self):
-        self.enqueue(self.atomic_write, self.pending, copy.deepcopy(self.state))
+        self.atomic_write(self.pending, self.state)
 
-    @diagnostic
-    def update(self, **fields):
-        if not self.lock.acquire(blocking=False):
-            return
-        try:
-            self.state["receipt"].update(fields)
-            self.checkpoint()
-        finally:
-            self.lock.release()
+    def change(self, fields):
+        self.state["receipt"].update(fields)
+        self.checkpoint()
 
-    @diagnostic
-    def begin(self, name, collection):
-        if not self.lock.acquire(blocking=False):
-            return
-        try:
-            entries = self.state["receipt"][collection]
-            entry = next((row for row in entries if row["name"] == name), None)
-            if entry is None:
-                entry = {"name": name, "seconds": 0.0, "outcome": "skipped"}
-                entries.append(entry)
+    def phase(self, name, collection, stamp, outcome):
+        entries = self.state["receipt"][collection]
+        entry = next((row for row in entries if row["name"] == name), None)
+        if entry is None:
+            entry = {"name": name, "seconds": 0.0, "outcome": "skipped"}
+            entries.append(entry)
+        key = collection + "/" + name
+        if outcome is None:
             entry["outcome"] = "failed"
-            self.state["active"][collection + "/" + name] = time.perf_counter()
-            self.checkpoint()
-        finally:
-            self.lock.release()
+            self.state["active"][key] = stamp
+        else:
+            entry.update(seconds=stamp - self.state["active"].pop(key), outcome=outcome)
+        self.checkpoint()
 
-    @diagnostic
-    def end(self, name, collection, outcome):
-        if not self.lock.acquire(blocking=False):
-            return
-        try:
-            started = self.state["active"].pop(collection + "/" + name, None)
-            if started is not None:
-                entry = next(row for row in self.state["receipt"][collection] if row["name"] == name)
-                entry.update(seconds=time.perf_counter() - started, outcome=outcome)
-                self.checkpoint()
-        finally:
-            self.lock.release()
+    def update(self, **fields):
+        self.enqueue(self.change, fields)
 
     @contextmanager
     def measure(self, name, collection="phases"):
-        self.begin(name, collection)
+        self.enqueue(self.phase, name, collection, time.perf_counter(), None)
         outcome = "failed"
         try:
             yield
             outcome = "succeeded"
         finally:
-            self.end(name, collection, outcome)
+            self.enqueue(self.phase, name, collection, time.perf_counter(), outcome)
+
+    def read_checkpoint(self):
+        state = json.loads(self.pending.read_text(encoding="utf-8"))
+        if state["owner"] != self.state["owner"]:
+            raise ValueError("checkpoint belongs to another run")
+        return state
 
     @diagnostic
-    def finalize(self, error):
-        state = diagnostic(self.read_checkpoint)() or self.state
-        now = time.perf_counter()
-        receipt = state["receipt"]
-        for key, started in state["active"].items():
-            collection, name = key.split("/", 1)
-            entry = next(row for row in receipt[collection] if row["name"] == name)
-            entry.update(seconds=now - started, outcome="failed")
-        if error is not None:
-            receipt.update(outcome="failed", error=receipt["error"] or short_error(error))
-        receipt.update(finished_at=utc_now(), seconds=now - state["started"])
-        receipt["assemblies"].sort(key=lambda row: row["name"])
-        saved = self.atomic_write(self.receipt, receipt)
-        # The child may have replaced the owned checkpoint during capture.
-        if diagnostic(self.read_checkpoint)() is not None:
-            diagnostic(self.pending.unlink)()
-        if self.pending in self.owned:
-            for temporary in self.pending.parent.glob(self.pending.name + ".*.tmp"):
-                diagnostic(temporary.unlink)(missing_ok=True)
-        table = [f"{'phase':<26} {'seconds':>10}  outcome"]
-        for row in receipt["phases"]:
-            table.append(f"{row['name']:<26} {row['seconds']:>10.3f}  {row['outcome']}")
-        table.append(f"{'total':<26} {receipt['seconds']:>10.3f}  {receipt['outcome']}")
-        self.reports.append(emit("\n".join(table)))
-        if saved and self.announce:
-            self.reports.append(emit(f"CAPTURE_TIMING_RECEIPT={self.receipt}", sys.stdout))
+    def cleanup(self):
+        if self.claim_owned:
+            for path in (self.claim, self.pending) if self.writable else (self.claim,):
+                diagnostic(path.unlink)(missing_ok=True)
+            if self.writable:
+                for path in self.receipt.parent.glob(self.receipt.stem + ".*.tmp"):
+                    diagnostic(path.unlink)(missing_ok=True)
+
+    def finalize(self, error, outcome, announce):
+        try:
+            state = diagnostic(self.read_checkpoint)() or self.state
+            receipt, now = state["receipt"], time.perf_counter()
+            if error is not None:
+                receipt.update(outcome="failed", error=receipt["error"] or short_error(error))
+            elif outcome is not None:
+                receipt.update(outcome="reused" if receipt["outcome"] == "reused" else outcome, error=None)
+            for key, started in state["active"].items():
+                collection, name = key.split("/", 1)
+                entry = next(row for row in receipt[collection] if row["name"] == name)
+                entry.update(seconds=now - started,
+                             outcome="succeeded" if receipt["outcome"] in {"succeeded", "reused"} else "failed")
+            receipt.update(finished_at=utc_now(), seconds=now - state["started"])
+            receipt["assemblies"].sort(key=lambda row: row["name"])
+            saved = diagnostic(self.atomic_write)(self.receipt, receipt)
+            table = [f"{'phase':<26} {'seconds':>10}  outcome"]
+            table += [f"{row['name']:<26} {row['seconds']:>10.3f}  {row['outcome']}" for row in receipt["phases"]]
+            table += [f"{'total':<26} {receipt['seconds']:>10.3f}  {receipt['outcome']}"]
+            self.reports.append(emit("\n".join(table)))
+            if saved and announce:
+                self.reports.append(emit(f"CAPTURE_TIMING_RECEIPT={self.receipt}", sys.stdout))
+        finally:
+            self.cleanup()
 
     @diagnostic
     def drain(self):
         flushed = threading.Event()
-        self.tasks.put((flushed.set, ()))
-        # Only shutdown waits, with the same finite budget as CLI error reporting.
+        self.enqueue(flushed.set)
         if not flushed.wait(ERROR_WRITE_SECONDS):
             emit("Warning: capture timing diagnostic flush exceeded its reporting budget")
 
     @diagnostic
-    def finish(self, error=None):
-        self.enqueue(self.finalize, error)
+    def finish(self, error=None, outcome=None, announce=False):
+        self.enqueue(self.finalize, error, outcome, announce)
         self.tasks.put((None, ()))
         deadline = time.perf_counter() + ERROR_WRITE_SECONDS
         self.worker.join(ERROR_WRITE_SECONDS)
@@ -287,28 +248,26 @@ class Timing:
 
 def supervise_capture(args, timeout):
     from processes import run_process
-    parser = timing_parser()
-    parser.add_argument("--output", default="")
-    options, _ = parser.parse_known_args(args)
-    timing = Timing(options.output, options.timing_receipt)
-    timing.announce = True
-    error = None
+    options = timing_options(args)
+    timing = Timing(options.output, options.timing_receipt, options.game)
+    error, outcome = None, "failed"
     try:
         environment = dict(os.environ, HUMANHOST_CAPTURE_CHILD="1", HUMANHOST_CAPTURE_TIMING=str(timing.pending),
-                           HUMANHOST_CAPTURE_TIMING_STATE=json.dumps(timing.state))
-        return run_process(args, timeout=timeout, env=environment, forward=True)
+                           HUMANHOST_CAPTURE_TIMING_STATE=timing.seed, HUMANHOST_CAPTURE_GAME=options.game)
+        result = run_process(args, timeout=timeout, env=environment, forward=True)
+        outcome = "succeeded"
+        return result
     except BaseException as exc:
         error = exc
         raise
     finally:
-        timing.finish(error)
+        timing.finish(error, outcome, announce=True)
 
 
 def cli_error(error):
     reporter = emit(str(error))
     if reporter:
         diagnostic(reporter.join)(ERROR_WRITE_SECONDS)
-    # Neither diagnostic workers nor blocked streams may delay CLI termination.
     os._exit(1)
 
 

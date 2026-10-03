@@ -12,7 +12,7 @@ import sys
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from processes import run_process, GIT_SECONDS, PROBE_SECONDS, ASSEMBLY_SECONDS, CAPTURE_SECONDS
-from timing import Timing, short_error, supervise_capture, timing_parser, receipt_directory, cli_error
+from timing import Timing, short_error, supervise_capture, timing_parser, timing_options, receipt_directory, cli_error
 
 FRAMEWORK = re.compile(r"^(System(?:\.|$)|Mono(?:\.|$)|mscorlib$|netstandard$|Microsoft\.|UnityEngine)")
 
@@ -192,10 +192,8 @@ def timed_snapshot(output, no_git, timing):
 def main(timing=None):
     owned = timing is None
     if owned:
-        parser = timing_parser()
-        parser.add_argument("--output", default="")
-        options, _ = parser.parse_known_args()
-        timing = Timing(options.output, options.timing_receipt)
+        options = timing_options()
+        timing = Timing(options.output, options.timing_receipt, options.game)
     error = None
     try:
         capture(timing)
@@ -219,7 +217,7 @@ def capture(timing):
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--no-git", action="store_true")
     options = parser.parse_args()
-    receipt_directory(options.timing_receipt, options.output)
+    receipt_directory(options.timing_receipt, options.output, options.game)
     if options.python_packages:
         sys.path.insert(0, str(options.python_packages.resolve()))
     game, output = options.game.resolve(), options.output.resolve()

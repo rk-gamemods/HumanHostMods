@@ -66,11 +66,17 @@ the checkpoint. It prints an aligned phase/seconds/outcome table and total to
 stderr. Timing stays in gitignored `.local/`; it never enters generated inputs,
 snapshot hashes or commits. `timing.py` is excluded from the generator/tool
 provenance hashes because it does not affect generated outputs. Timing generates
-the random run id and reserves receipt/checkpoint names exclusively; an existing
-file is never overwritten. `--timing-receipt <path>` (also `--timing-receipt=<path>`)
+the random run id and reserves its unique name with an exclusive `.claim` file.
+Receipts appear only after atomic publication; an empty `.json` is never exposed.
+Owned claims and checkpoints are cleaned even if diagnostics fail. Existing files
+are preserved. `--timing-receipt <path>` (also `--timing-receipt=<path>`)
 selects a parent directory inside `.local/runs/`; timing still generates the
-filename. Paths outside that directory are usage errors rejected before writes.
-Receipt/checkpoint I/O runs in a background worker with a bounded final flush.
+filename. Paths outside that directory, or receipt directories overlapping game
+inputs, snapshot output, staging or backup in either direction, are usage errors
+rejected before writes using normalized absolute paths.
+One writer queue serializes all state updates and receipt/checkpoint I/O, with a
+bounded final flush. If checkpoint reading fails, the receipt uses the actual
+process result rather than assuming failure.
 Diagnostic failures emit a warning and preserve capture success, failure or
 timeout, even when no receipt can be saved. Timing reports the generated path to
 the wrapper only after saving the receipt. The wiki handoff appends `--capture-timing <path>`

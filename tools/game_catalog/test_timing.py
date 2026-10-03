@@ -1,5 +1,6 @@
 """Dependency-free checks: py -3 tools/game_catalog/test_timing.py"""
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -53,6 +54,7 @@ class TimingTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as caught:
                 with refresh.timed_snapshot(Path("synthetic"), False, timer):
                     raise original
+            timer.drain()
         self.assertIs(caught.exception, original)
         snapshot.__exit__.assert_called_once()
         self.assertIs(snapshot.__exit__.call_args.args[1], original)
@@ -67,7 +69,7 @@ class TimingTests(unittest.TestCase):
 
     def test_snapshot_output_under_runs_still_cannot_contain_receipts(self):
         output = self.directory / "snapshot"
-        with patch("timing.Path.open") as opened, self.assertRaisesRegex(ValueError, "inside snapshot output"):
+        with patch("timing.Path.open") as opened, self.assertRaisesRegex(ValueError, "overlaps"):
             Timing(output, output / "capture.json")
         opened.assert_not_called()
 
@@ -76,7 +78,7 @@ class TimingTests(unittest.TestCase):
         args = ["refresh.py", "--game", "synthetic game", "--output", str(output),
                 f"--timing-receipt={output / 'capture.json'}"]
         with patch("refresh.sys.argv", args), patch("timing.Path.open") as opened, \
-                self.assertRaisesRegex(ValueError, "inside snapshot output"):
+                self.assertRaisesRegex(ValueError, "overlaps"):
             refresh.main()
         opened.assert_not_called()
 
@@ -152,6 +154,86 @@ class TimingTests(unittest.TestCase):
             with self.subTest(operation=operation), patch(operation, side_effect=OSError("diagnostic I/O failed")), \
                     patch("processes.run_process", return_value=0):
                 self.assertEqual(supervise_capture(["python", "synthetic.py", "--timing-receipt", str(self.hint)], 2), 0)
+            if operation == "timing.Path.read_text":
+                receipt = next(self.directory.glob("capture-*.json"))
+                value = json.loads(receipt.read_text())
+                self.assertEqual(value["outcome"], "succeeded")
+                self.assertIsNone(value["error"])
+        self.assertEqual(list(self.directory.glob("*.claim")), [])
+
+    def test_overlap_checks_both_directions_for_output_stage_backup_and_game(self):
+        for kind in ("output", "stage", "backup", "game"):
+            output = self.directory / "snapshot"
+            protected = output.with_name(output.name + ".catalog-" + kind) if kind in {"stage", "backup"} else output
+            for relation in ("inside", "ancestor", "equal"):
+                hint = protected / "receipts" / "hint.json" if relation == "inside" else protected / "hint.json"
+                if relation == "ancestor":
+                    hint = self.hint
+                with self.subTest(kind=kind, relation=relation), patch("timing.Path.open") as opened, \
+                        self.assertRaisesRegex(ValueError, "overlaps"):
+                    Timing("" if kind == "game" else output, hint, protected if kind == "game" else "")
+                opened.assert_not_called()
+
+    def test_overlap_checks_normalize_dot_segments(self):
+        output = self.directory / "unused" / ".." / "snapshot"
+        hint = self.directory / "snapshot" / "." / "receipts" / "hint.json"
+        with patch("timing.Path.open") as opened, self.assertRaisesRegex(ValueError, "overlaps"):
+            Timing(output, hint)
+        opened.assert_not_called()
+
+    def test_claim_reservation_does_not_expose_json_and_is_cleaned_on_failure(self):
+        timer = self.timer()
+        timer.drain()
+        self.assertTrue(timer.claim.exists())
+        self.assertFalse(timer.receipt.exists())
+        with patch("timing.os.replace", side_effect=OSError("publication failed")):
+            timer.finish(outcome="succeeded")
+        self.assertFalse(timer.receipt.exists())
+        self.assertFalse(timer.claim.exists())
+        self.assertFalse(timer.pending.exists())
+
+    def test_receipt_is_invisible_until_atomic_publication(self):
+        entered, release = threading.Event(), threading.Event()
+        timer = self.timer()
+        timer.update(outcome="succeeded")
+        timer.drain()
+        replace = os.replace
+        def delayed(source, destination):
+            if destination == timer.receipt:
+                entered.set()
+                release.wait()
+            return replace(source, destination)
+        try:
+            with patch("timing.os.replace", side_effect=delayed):
+                timer.finish(outcome="succeeded")
+                self.assertTrue(entered.wait(2))
+                self.assertFalse(timer.receipt.exists())
+                release.set()
+                timer.worker.join(2)
+        finally:
+            release.set()
+            timer.worker.join(2)
+        self.assertEqual(json.loads(timer.receipt.read_text())["outcome"], "succeeded")
+        self.assertFalse(timer.claim.exists())
+
+    def test_concurrent_assembly_updates_are_serialized_without_drops(self):
+        timer = self.timer()
+        timer.drain()
+        names = [f"assembly-{index}.dll" for index in range(64)]
+        timer.update(assemblies=[{"name": name, "seconds": 0.0, "outcome": "skipped"} for name in names])
+        def assembly(name):
+            with timer.measure(name, "assemblies"):
+                pass
+        with patch.object(timer, "checkpoint", side_effect=lambda: time.sleep(0.001)):
+            with ThreadPoolExecutor(max_workers=16) as executor:
+                list(executor.map(assembly, names))
+            timer.drain()
+        timer.enqueue(timer.checkpoint)
+        timer.finish(outcome="succeeded")
+        value = json.loads(timer.receipt.read_text())
+        self.assertEqual({row["name"] for row in value["assemblies"]}, set(names))
+        self.assertTrue(all(row["outcome"] == "succeeded" for row in value["assemblies"]))
+        self.assertEqual(timer.state["active"], {})
 
     def test_blocked_storage_cannot_block_capture_or_change_error(self):
         entered, release = threading.Event(), threading.Event()

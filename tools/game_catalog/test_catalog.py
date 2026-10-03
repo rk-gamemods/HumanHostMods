@@ -17,21 +17,23 @@ from unittest.mock import Mock, patch
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--python-packages")
+parser.add_argument("--without-unitypy", action="store_true", help="Run process, snapshot and input-identity tests without Unity dependencies")
 options, remaining = parser.parse_known_args()
 if options.python_packages:
     sys.path.insert(0, options.python_packages)
 
-from addressables import decode, read_object
-from bundles import Bundle, MemberStream
-from catalog import Catalog, clean, source_key, rows
+if not options.without_unitypy:
+    from addressables import decode, read_object
+    from bundles import Bundle, MemberStream
+    from catalog import Catalog, clean, source_key, rows
+    from schemas import normalize_generated
+    from UnityPy.helpers.TypeTreeNode import TypeTreeNode
+    from UnityPy.helpers.TypeTreeHelper import read_typetree
+    from UnityPy.streams import EndianBinaryReader
 from snapshot import Snapshot, git
 from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable, decompile
 from processes import run_process
-from schemas import normalize_generated
 from game_version import capture as capture_version
-from UnityPy.helpers.TypeTreeNode import TypeTreeNode
-from UnityPy.helpers.TypeTreeHelper import read_typetree
-from UnityPy.streams import EndianBinaryReader
 from timing import Timing, PHASES, RUNS
 from test_timing import TimingTests
 import refresh
@@ -934,4 +936,24 @@ class SnapshotTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main(argv=[sys.argv[0], *remaining], verbosity=2)
+    if options.without_unitypy:
+        names = ["ProcessTests"] + ["DataTests." + name for name in (
+            "test_capture_reuse_requires_content_build_tool_and_full_scope_match",
+            "test_application_version_selects_only_player_settings_with_input_evidence",
+            "test_reuse_stability_rejects_new_and_changed_installed_inputs",
+            "test_steam_playtime_does_not_change_build_identity",
+            "test_inventory_excludes_saves_and_runtime_mod_browser",
+            "test_tool_hash_ignores_git_line_ending_conversion")]
+        names += ["SnapshotTests." + name for name in unittest.defaultTestLoader.getTestCaseNames(SnapshotTests)
+                  if name not in {"test_timing_success_reuse_and_forced_repeat_preserve_snapshot_identity",
+                                  "test_timing_failure_preserves_snapshot_and_records_cleanup"}]
+        RUNS.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="catalog-tests-", dir=RUNS.parent) as folder:
+            previous = tempfile.tempdir
+            tempfile.tempdir = folder
+            try:
+                unittest.main(argv=[sys.argv[0], *remaining], defaultTest=names, verbosity=2)
+            finally:
+                tempfile.tempdir = previous
+    else:
+        unittest.main(argv=[sys.argv[0], *remaining], verbosity=2)
