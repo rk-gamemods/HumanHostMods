@@ -36,13 +36,18 @@ separate Git repositories and do not synchronize automatically.
 
 ## Game facts (verify before relying on them)
 
-Recorded 2026-09-19. The game is in early access and updates often. Re-check with
-`tools/Get-ModEnvStatus.ps1` and the BepInEx log instead of trusting this list.
+The game is in early access and updates often. Read the current game version and
+Steam build from the latest successful or reused capture receipt in `.local/runs/`
+(`game.version` / `game.build`) or `HumanHostCodebase/BUILD_INFO.md`. Audit the
+captured version against installed input bytes with `tools/check_game_version.py`
+(see [version audit](docs/GAME_CODEBASE.md#what-is-generated)). Last verified pair:
+game 0.8.318 / Steam build 25675256 on 2026-10-02. This is a dated observation,
+not a pinned current version. Re-check the loader and environment with
+`tools/Get-ModEnvStatus.ps1` and the BepInEx log.
 
 - Install: `C:\Steam\steamapps\common\Human Host`. Override per machine in
   `GamePaths.local.props`.
-- Unity 2022.3.62f3, Mono scripting backend, HDRP. Game version 0.8.311, Steam
-  build 25407931.
+- Unity 2022.3.62f3, Mono scripting backend, HDRP.
 - BepInEx 5.4.23.5 (Doorstop 4.5). BepInEx 6 is not used: it is still a
   pre-release, and BepInEx 5 is the version for Unity Mono games.
 - Game code is split across about 48 developer-named assemblies (`Player`,
@@ -89,12 +94,17 @@ dotnet build mods\HelloHost -c Release -p:DeployToGame=true        # build and d
 .\tools\Decompile-GameCode.ps1                                  # source and text catalogs
 ```
 
+Captures print timing totals and save timing receipts in `.local/runs/`; see [receipt fields](docs/GAME_CODEBASE.md#timing-receipt).
+
 ## Validation
 
 - For catalog changes, run `py -3 tools/game_catalog/test_catalog.py` with
   `--python-packages <isolated-dependency-directory>` when needed, then verify
   a real refresh and unchanged-input repeat. A refresh must preserve the old
   snapshot on failure and report decoding or reference gaps explicitly.
+- Run `py -3 tools/game_catalog/test_timing.py` for timing receipt coverage and
+  `pwsh -NoProfile -File tools/Test-DecompileWikiHandoff.ps1` for Windows
+  filesystem and executable handoff coverage; neither needs a game install.
 - `dotnet build HumanHostMods.slnx -c Release` with 0 warnings and 0 errors.
 - For runtime changes: deploy, launch, and confirm in `BepInEx\LogOutput.log`
   that the plugin's load line appears and no new `[Error` or `[Fatal` lines do.

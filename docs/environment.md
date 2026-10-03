@@ -1,5 +1,7 @@
 # Environment
 
+Historical report from 2026-09-19; use [AGENTS.md game facts](../AGENTS.md#game-facts-verify-before-relying-on-them) for current-value sources.
+
 State of the local modding setup, recorded 2026-09-19. Run
 `tools/Get-ModEnvStatus.ps1` for the current state.
 
