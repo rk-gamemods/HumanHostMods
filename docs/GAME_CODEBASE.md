@@ -21,6 +21,22 @@ uses that setting before `.cache/catalog-python`. It does not install packages
 or change the game installation. Avoid refreshing while Steam is modifying the
 game files. Input changes detected during generation abort publication.
 
+After a successful full capture, the command runs the independent
+`HumanHostWiki/wiki.py update --operator-report` entrypoint. An unchanged capture
+also follows this handoff. The wiki reads selected facts and evidence in place;
+raw code and whole catalogs are not copied into wiki content. Supported wiki work
+finishes before the operator receives its grouped unresolved-content report.
+Execution failures are reported separately. The configured wiki now creates a
+coordinated Git release and publishes supported content to GitHub Pages, verifying
+topic sites before advancing the hub. Gameplay coverage and verification remain
+incomplete and are labeled in the reader.
+See [wiki workflow](../HumanHostWiki/docs/WORKFLOW.md).
+
+Use `-WikiPath` for another configured wiki umbrella. `-SkipWiki` explicitly runs
+source-only diagnostics. Partial `-Assemblies` and `-NoGit` exports skip the wiki
+because they cannot provide its full committed input contract. A missing wiki
+entrypoint after normal capture is reported as an execution failure.
+
 `-All` remains accepted; all non-framework managed assemblies are now the
 default. `-Assemblies Player,UI` requires a new `-OutputPath` and marks its
 assembly coverage as partial. It cannot overwrite the normal full snapshot.
@@ -36,6 +52,7 @@ gitignored, such as `HumanHostCodebase` or a path under `.local`.
 | `<assembly>/*.cs` | C# from game and package assemblies, with shipped PDB variable names where available |
 | `Catalog/inputs.jsonl` | Input paths, sizes, SHA-256 hashes and categories |
 | `Catalog/steam-build.json` | Steam build, branch and installed depot manifest identities, without playtime or account state |
+| `Catalog/game-version.json` | Captured application version from `PlayerSettings.bundleVersion`, or an explicit unknown reason; includes input hash and object/field evidence |
 | `Catalog/assemblies.jsonl` | Every managed DLL, decompilation status and exclusion reason |
 | `Catalog/embedded-resources.jsonl` | Names of resources embedded in selected assemblies; resource bodies are not extracted |
 | `Catalog/serialized-files.jsonl` | Original bundle/member paths, Unity versions, external dependencies and object counts |
@@ -51,6 +68,16 @@ gitignored, such as `HumanHostCodebase` or a path under `.local`.
 | `Catalog/coverage.json` | Object/type counts, omitted payload categories and decoding/reference gaps |
 | `Catalog/generator.json` | Parser/decompiler versions and generator hashes, normalizing CRLF to LF |
 
+Script records have verified byte offsets, sizes and SHA-256 hashes in the object
+index. Records of at least 1 MiB also carry a `members` map: each top-level name
+maps to its encoded JSON value size; `fields` maps every field name to its value
+size. Names and sizes describe the complete record, including fields that a wiki
+adapter does not select. Values stay in the original object shard. The producer
+writes the same sorted, space-separated UTF-8 JSON bytes as before, with LF endings.
+Readers can hash skipped values in bounded chunks and decode selected fields.
+They must verify the record hash, member names/boundaries and total byte coverage
+before accepting a projected record. Older indexes remain valid without this map.
+
 The inventory excludes the game's `Save` and `ModBrowser` runtime directories,
 `*.log`, `log-*.txt`, and `output_log.txt`, including Chromium's plugin log.
 Steam account state, playtime and download progress are excluded; build and depot
@@ -58,6 +85,25 @@ identities are recorded separately so those transient fields do not create diffs
 Native executable/module files and framework DLLs are inventoried. Their native
 implementations are not reconstructed as C#. The assembly manifest explicitly
 identifies framework exclusions.
+
+`tools/game_catalog/game_version.py` selects the unique captured `PlayerSettings`
+object's `bundleVersion`. Unity documents this as the value of
+[Application.version](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/Application-version.html).
+Missing, ambiguous or invalid settings record an unknown version. Input evidence
+must resolve to the normal hash inventory. No executable-version fallback is used:
+the installed `Human Host.exe` product version identifies the Unity engine.
+The wiki consumes this small record from new source commits; it does not backfill
+version claims into older immutable snapshot receipts.
+
+After a capture, independently audit that field against the catalog and installed
+input bytes with:
+
+```powershell
+py -3 tools/check_game_version.py --source HumanHostCodebase --game 'C:/Steam/steamapps/common/Human Host'
+```
+
+This checks a recorded version; unknown versions remain an explicit gap and do
+not satisfy that audit. The check never modifies installed files.
 
 ## Reading loot data
 
@@ -135,7 +181,11 @@ git -C HumanHostCodebase diff HEAD~1 -- Catalog/views/loot-tags.jsonl
 ```
 
 An unchanged-input repeat must leave the snapshot's Git HEAD and working tree
-unchanged. Changes to parser versions or generator source intentionally change
+unchanged. Refresh hashes the installed inputs and compares the Steam identity,
+parser/decompiler versions and generator hashes before export. An exact match
+reuses the clean full snapshot, skipping catalog decoding and assembly decompilation.
+The stability checks still run; partial assembly captures are not reusable full
+snapshots. Changes to parser versions or generator source intentionally change
 `Catalog/generator.json`. The local unit tests exercise binary omission,
 Addressables decoding, lazy bundle reads, reference ambiguity, writer locking,
 rollback, dirty-state preservation and repeat publication.

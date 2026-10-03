@@ -39,6 +39,17 @@ class Snapshot:
         if path.exists():
             shutil.rmtree(path)
 
+    def move_output_to_backup(self):
+        # Windows refuses to rename a directory while any process holds a handle
+        # inside it, such as an editor's Git integration watching .git.
+        try:
+            os.replace(self.output, self.backup)
+        except PermissionError as exc:
+            raise RuntimeError(
+                f"Windows denied renaming {self.output}. Usually another process holds a file or directory "
+                "open inside it, such as an editor's Git integration watching its .git folder; close that "
+                "repository or program, then rerun. Otherwise check that this account may rename it.") from exc
+
     def write_journal(self, data):
         temporary = self.journal.with_suffix(".tmp")
         with temporary.open("w", encoding="utf-8") as handle:
@@ -55,8 +66,15 @@ class Snapshot:
         state = json.loads(self.journal.read_text(encoding="utf-8"))
         if state["output"] != str(self.output):
             raise RuntimeError("Snapshot journal belongs to a different output path")
+        if state["phase"] == "staging" and self.backup.exists():
+            # Only the publication probe moves the output before publishing, so this
+            # backup is the original snapshot. Never infer a commit from it.
+            if self.output.exists():
+                raise RuntimeError(f"{self.output} and {self.backup} both exist after an interrupted probe; "
+                                   "inspect both before retrying.")
+            os.replace(self.backup, self.output)
         committed = state["phase"] == "committed"
-        if not committed and (self.output / ".git").exists() and state.get("head"):
+        if not committed and state["phase"] == "publishing" and (self.output / ".git").exists() and state.get("head"):
             head = git(self.output, "rev-parse", "HEAD", check=False).stdout.strip()
             committed = head != state["head"] and not git(self.output, "status", "--porcelain").stdout.strip()
         if self.backup.exists() and not committed:
@@ -109,6 +127,15 @@ class Snapshot:
                 self.state["head"] = git(self.output, "rev-parse", "HEAD").stdout.strip()
             self.original_files = self.fingerprint()
             self.write_journal(self.state)
+            if self.state["existed"]:
+                # Probe the publication swap now instead of failing after a long generation.
+                # The journal lets recovery restore the output if the swap back is interrupted.
+                try:
+                    self.move_output_to_backup()
+                except RuntimeError:
+                    self.journal.unlink()
+                    raise
+                os.replace(self.backup, self.output)
             self.stage.mkdir()
             return self
         except BaseException:
@@ -124,7 +151,7 @@ class Snapshot:
         self.state["phase"] = "publishing"
         self.write_journal(self.state)
         if self.output.exists():
-            os.replace(self.output, self.backup)
+            self.move_output_to_backup()
         os.replace(self.stage, self.output)
         if (self.backup / ".git").exists():
             os.replace(self.backup / ".git", self.output / ".git")

@@ -20,10 +20,11 @@ if options.python_packages:
 
 from addressables import decode, read_object
 from bundles import Bundle, MemberStream
-from catalog import Catalog, clean, source_key
+from catalog import Catalog, clean, source_key, rows
 from snapshot import Snapshot, git
-from refresh import steam_identity, input_paths, tool_digest
+from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable
 from schemas import normalize_generated
+from game_version import capture as capture_version
 from UnityPy.helpers.TypeTreeNode import TypeTreeNode
 from UnityPy.helpers.TypeTreeHelper import read_typetree
 from UnityPy.streams import EndianBinaryReader
@@ -54,6 +55,100 @@ class BundleTests(unittest.TestCase):
 
 
 class DataTests(unittest.TestCase):
+    def test_large_component_member_index_preserves_canonical_bytes_and_all_names(self):
+        import hashlib
+        value = {"id": "a#1", "script": {"class": "Fixture"},
+                 "fields": {"日本語": 4, "geometry": [{"x": 1, "y": 2}] * 65000,
+                            "future": {"value": 7}}, "references": []}
+        expected = (json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n").encode()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "records.jsonl"
+            locations = {}
+            rows(path, [value], locations)
+            data = path.read_bytes()
+            self.assertEqual(expected, data)
+            location = locations["a#1"]
+            self.assertEqual(hashlib.sha256(data).hexdigest(), location["sha256"])
+            members = location["members"]
+            self.assertEqual(set(value), set(members))
+            self.assertEqual(set(value["fields"]), set(members["fields"]))
+            for key, size in members["fields"].items():
+                self.assertEqual(len(json.dumps(value["fields"][key], ensure_ascii=False, sort_keys=True).encode()), size)
+
+    def test_component_locations_are_byte_exact_without_duplicate_records(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "records.jsonl"
+            values = [{"id": "a#1", "name": "日本語", "script": {"class": "Fixture"}},
+                      {"id": "a#2", "name": "engine object"},
+                      {"id": "a#3", "script": {"class": "Other"}, "fields": {"x": 4}}]
+            locations = {}
+            rows(path, values, locations)
+            self.assertEqual({"a#1", "a#3"}, set(locations))
+            with path.open("rb") as stream:
+                for value in [values[0], values[2]]:
+                    location = locations[value["id"]]
+                    stream.seek(location["offset"])
+                    data = stream.read(location["bytes"])
+                    self.assertEqual(value, json.loads(data))
+                    self.assertEqual(location["sha256"], hashlib.sha256(data).hexdigest())
+            self.assertNotIn(b"\r", path.read_bytes())
+
+    def test_capture_reuse_requires_content_build_tool_and_full_scope_match(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder)
+            catalog = output / "Catalog"
+            catalog.mkdir()
+            steam, inputs, generator = {"build_id": "1"}, [{"path": "game.dll", "sha256": "a"}], {"tools": {"parser": "a"}}
+            for name, data in [("steam-build.json", steam), ("generator.json", generator), ("coverage.json", {"decode_failures": []}),
+                               ("game-version.json", {"schema": 1, "status": "unknown", "version": None, "evidence": []})]:
+                (catalog / name).write_text(json.dumps(data))
+            (catalog / "inputs.jsonl").write_text(json.dumps(inputs[0]) + "\n")
+            (catalog / "assemblies.jsonl").write_text(json.dumps({"reason": "selected"}) + "\n")
+            self.assertTrue(reusable_capture(output, steam, inputs, generator))
+            self.assertFalse(reusable_capture(output, {"build_id": "2"}, inputs, generator))
+            self.assertFalse(reusable_capture(output, steam, [{"path": "game.dll", "sha256": "b"}], generator))
+            self.assertFalse(reusable_capture(output, steam, inputs, {"tools": {"parser": "b"}}))
+            (catalog / "assemblies.jsonl").write_text(json.dumps({"reason": "explicit assembly subset"}) + "\n")
+            self.assertFalse(reusable_capture(output, steam, inputs, generator))
+
+    def test_application_version_selects_only_player_settings_with_input_evidence(self):
+        records = [{"id": "globalgamemanagers#1", "type": "PlayerSettings", "fields": {"bundleVersion": "0.8.315"}},
+                   {"id": "other#2", "type": "MonoBehaviour", "fields": {"bundleVersion": "wrong"}}]
+        inputs = [{"path": "Human Host_Data/globalgamemanagers", "sha256": "a" * 64}]
+        sources = {"globalgamemanagers": "globalgamemanagers"}
+        result = capture_version(iter(records), sources, inputs)
+        self.assertEqual(result["version"], "0.8.315")
+        self.assertEqual(result["evidence"], [{"source_path": inputs[0]["path"], "source_sha256": "a" * 64,
+                                             "object_id": "globalgamemanagers#1", "field": "/bundleVersion"}])
+        self.assertEqual(result, capture_version(reversed(records), sources, inputs))
+        self.assertEqual(capture_version([], sources, inputs)["reason"], "missing-player-settings")
+        self.assertEqual(capture_version(records + [records[0]], sources, inputs)["reason"], "ambiguous-player-settings")
+        for invalid in (None, "", 315, " version ", "line\nbreak", "x" * 129):
+            records[0]["fields"]["bundleVersion"] = invalid
+            self.assertIsNone(capture_version(records, sources, inputs)["version"])
+        records[0]["fields"]["bundleVersion"] = "0.8.315"
+        with self.assertRaisesRegex(ValueError, "inventory"):
+            capture_version(records, sources, [])
+
+    def test_reuse_stability_rejects_new_and_changed_installed_inputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            game = Path(folder)
+            managed = game / "Human Host_Data" / "Managed"
+            managed.mkdir(parents=True)
+            path = managed / "Game.dll"
+            path.write_bytes(b"fixture")
+            paths = input_paths(game)
+            stamps = {p: (p.stat().st_size, p.stat().st_mtime_ns) for p in paths}
+            steam = steam_identity(game)
+            inputs_stable(game, paths, stamps, steam)
+            path.write_bytes(b"changed size")
+            with self.assertRaisesRegex(RuntimeError, "changed during generation"):
+                inputs_stable(game, paths, stamps, steam)
+            (managed / "Added.dll").write_bytes(b"new")
+            with self.assertRaisesRegex(RuntimeError, "input set changed"):
+                inputs_stable(game, paths, stamps, steam)
+
     def test_steam_playtime_does_not_change_build_identity(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
@@ -198,6 +293,50 @@ class SnapshotTests(unittest.TestCase):
             with self.assertRaises((RuntimeError, OSError)):
                 with Snapshot(self.output):
                     self.fail("Second writer acquired lock")
+
+    @unittest.skipUnless(os.name == "nt", "Only Windows refuses to rename a directory with open handles inside")
+    def test_held_output_fails_before_generation(self):
+        # A process working directory inside .git holds a handle, like an editor's Git watcher.
+        previous = os.getcwd()
+        os.chdir(self.output / ".git")
+        try:
+            with self.assertRaisesRegex(RuntimeError, "Windows denied renaming .* another process holds"):
+                with Snapshot(self.output) as snapshot:
+                    self.fail("Generation started although publication cannot replace the output")
+        finally:
+            os.chdir(previous)
+        snapshot = Snapshot(self.output)
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+        self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+
+    def interrupt_probe(self):
+        # Simulate a crash after the probe's forward rename, before the rename back.
+        snapshot = Snapshot(self.output)
+        snapshot.write_journal({"output": str(self.output), "phase": "staging", "head": self.head.strip(), "existed": True})
+        os.replace(self.output, snapshot.backup)
+        return snapshot
+
+    def test_interrupted_probe_restores_the_snapshot(self):
+        snapshot = self.interrupt_probe()
+        with Snapshot(self.output):
+            pass
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+        self.assertFalse(snapshot.backup.exists() or snapshot.journal.exists())
+
+    def test_interrupted_probe_never_discards_a_recreated_output(self):
+        snapshot = self.interrupt_probe()
+        self.output.mkdir()
+        (self.output / "BUILD_INFO.md").write_text("recreated")
+        git(self.output, "init", "--quiet")
+        git(self.output, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "add", "-A")
+        git(self.output, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "other")
+        with self.assertRaisesRegex(RuntimeError, "both exist"):
+            with Snapshot(self.output):
+                self.fail("Recovery accepted an ambiguous interrupted probe")
+        self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "recreated")
 
     def test_dirty_snapshot_is_preserved(self):
         (self.output / "notes.txt").write_text("user work")

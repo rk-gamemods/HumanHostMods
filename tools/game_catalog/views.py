@@ -3,7 +3,8 @@ import collections
 from catalog import dump, rows, walk
 
 
-def generate(destination, records, addressables, containers):
+def generate(destination, records, addressables, containers, locations=None):
+    locations = locations or {}
     paths, guids, components = collections.defaultdict(list), {}, collections.defaultdict(list)
     for path, targets in containers.items():
         for target in targets:
@@ -71,7 +72,9 @@ def generate(destination, records, addressables, containers):
     rows(destination / "views" / "loot-sources.jsonl", sources)
     rows(destination / "views" / "items.jsonl", items)
     rows(destination / "views" / "object-index.jsonl", ({"id": i, "name": label(i), "type": r["type"],
-         "class": r.get("script", {}).get("class"), "paths": sorted(paths[i])} for i, r in sorted(records.items())))
+         "class": r.get("script", {}).get("class"), "paths": sorted(paths[i]),
+         **({"assembly": r["script"]["assembly"], "record": locations[i]} if i in locations else {})}
+         for i, r in sorted(records.items())))
     # Subject indexes point to complete records without duplicating large metadata bodies.
     for subject, terms in {"spawns": ("spawn", "biome", "creature_mgr"),
                            "recipes": ("recipe", "craft"),

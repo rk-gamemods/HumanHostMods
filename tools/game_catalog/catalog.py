@@ -38,11 +38,54 @@ def dump(path, value):
                                allow_nan=False) + "\n", encoding="utf-8", errors="backslashreplace")
 
 
-def rows(path, values):
+def rows(path, values, locations=None):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", errors="backslashreplace", newline="\n") as handle:
+    with path.open("wb") as handle:
         for value in values:
-            handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n")
+            if locations is not None and value.get("script"):
+                locations[value["id"]] = indexed_row(handle, value)
+            else:
+                handle.write(encoded(value) + b"\n")
+
+
+def encoded(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8", errors="backslashreplace")
+
+
+def indexed_row(handle, value):
+    """Write canonical JSON once; index large records by named member sizes.
+
+    The index describes every member, including unknown future fields. It carries
+    no wiki selection policy and creates no second raw record or field-value copy.
+    """
+    start, sha = handle.tell(), hashlib.sha256()
+
+    def emit(data):
+        handle.write(data)
+        sha.update(data)
+
+    def members(obj, split_fields=False):
+        sizes = {}
+        emit(b"{")
+        for index, key in enumerate(sorted(obj)):
+            if index:
+                emit(b", ")
+            emit(encoded(key) + b": ")
+            if split_fields and key == "fields" and isinstance(obj[key], dict):
+                sizes[key] = members(obj[key])
+            else:
+                data = encoded(obj[key])
+                emit(data)
+                sizes[key] = len(data)
+        emit(b"}")
+        return sizes
+
+    sizes = members(value, split_fields=True)
+    emit(b"\n")
+    location = {"offset": start, "bytes": handle.tell() - start, "sha256": sha.hexdigest()}
+    if location["bytes"] >= 1024 * 1024:
+        location["members"] = sizes
+    return location
 
 
 def clean(value):
@@ -341,6 +384,7 @@ class Catalog:
         print(f"[catalog] {len(self.files)} serialized files; {len(self.objects)} objects", flush=True)
         self.prepare()
         object_types, script_types = collections.Counter(), collections.Counter()
+        locations = {}
         for index, (key, info) in enumerate(sorted(self.files.items()), 1):
             print(f"[catalog metadata {index}/{len(self.files)}] {key}", flush=True)
             output = []
@@ -354,7 +398,7 @@ class Catalog:
                     script_types[record["script"]["class"]] += 1
             # The readable source name is retained, rather than a hash-only output filename.
             relative = key.replace("::", "/") + ".jsonl"
-            rows(self.destination / "objects" / relative, output)
+            rows(self.destination / "objects" / relative, output, locations)
         rows(self.destination / "addressables.jsonl", self.addressables)
         rows(self.destination / "references.jsonl", ({"source": identity, **ref}
              for identity, record in sorted(self.records.items()) for ref in record.get("references", [])))
@@ -377,7 +421,7 @@ class Catalog:
             "identity_note": "Bundle name without content hash + serialized member ordinal + path ID. Path IDs can change across builds; Addressables GUIDs and container paths provide additional identity.",
         })
         from views import generate
-        generate(self.destination, self.records, self.addressables, self.containers)
+        generate(self.destination, self.records, self.addressables, self.containers, locations)
         for stream in self.streams:
             stream.close()
         return self.failures
