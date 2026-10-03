@@ -1,4 +1,8 @@
-"""Capture process deadlines and owned-tree cleanup (not generator inputs)."""
+"""Capture deadlines and bounded pipe cleanup (not generator inputs).
+
+Windows job objects guarantee full descendant ownership. POSIX process-group
+cleanup is best effort: descendants can leave the child's group.
+"""
 import ctypes
 import os
 import signal
@@ -15,6 +19,7 @@ DECODER_SECONDS = 1200
 CAPTURE_SECONDS = 14400
 WIKI_SECONDS = 15000  # Wiki's 4-hour watchdog plus 10 minutes for its timeout report.
 STDERR_LIMIT = 4096
+READER_JOIN_SECONDS = 1  # Cleanup grace per pipe, including a blocked consumer.
 
 
 def windows_job(process):
@@ -59,46 +64,9 @@ def windows_job(process):
     return lambda: kernel.CloseHandle(handle)
 
 
-def kill_posix_tree(process, supervised):
-    groups = {process.pid}
-    try:
-        if supervised and process.poll() is None:
-            # Nested capture helpers own separate groups. Freeze the parent, then
-            # discover/freeze descendants to close the fork race before killing.
-            os.killpg(process.pid, signal.SIGSTOP)
-            stopped = {process.pid}
-            while True:
-                listing = run_process(["ps", "-A", "-o", "pid=,ppid="], timeout=5)
-                pairs = [tuple(map(int, row.split())) for row in listing.stdout.splitlines()]
-                found = set(stopped)
-                for _ in range(len(pairs)):
-                    children = {pid for pid, parent in pairs if parent in found}
-                    if children <= found:
-                        break
-                    found.update(children)
-                new = found - stopped
-                if not new:
-                    break
-                for pid in new:
-                    try:
-                        group = os.getpgid(pid)
-                        if group != os.getpgrp():
-                            groups.add(group)
-                        os.kill(pid, signal.SIGSTOP)
-                    except ProcessLookupError:
-                        pass
-                stopped.update(new)
-    finally:
-        for group in groups:
-            try:
-                os.killpg(group, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-
-
 def run_process(args, *, timeout, check=True, text=True, encoding="utf-8",
                 errors="replace", cancel=None, env=None, forward=False):
-    """Drain both pipes concurrently, bound stderr, and reap our whole tree."""
+    """Drain both pipes concurrently, bound stderr, and reap the owned process."""
     started = time.monotonic()
     process = None
     close_job = None
@@ -109,15 +77,13 @@ def run_process(args, *, timeout, check=True, text=True, encoding="utf-8",
     def drain(pipe, target, limit, destination):
         try:
             while block := pipe.read1(65536):
+                if not forward or limit:
+                    target.extend(block)
+                    if limit:
+                        del target[:-limit]
                 if forward:
                     destination.buffer.write(block)
                     destination.buffer.flush()
-                else:
-                    target.extend(block)
-                if limit:
-                    if forward:
-                        target.extend(block)
-                    del target[:-limit]
         finally:
             pipe.close()
 
@@ -131,7 +97,7 @@ def run_process(args, *, timeout, check=True, text=True, encoding="utf-8",
             close_job = windows_job(process)
         for pipe, target, limit, destination in ((process.stdout, stdout, None, sys.stdout),
                                                   (process.stderr, stderr, STDERR_LIMIT, sys.stderr)):
-            reader = threading.Thread(target=drain, args=(pipe, target, limit, destination))
+            reader = threading.Thread(target=drain, args=(pipe, target, limit, destination), daemon=True)
             reader.start()
             readers.append(reader)
         while True:
@@ -156,7 +122,10 @@ def run_process(args, *, timeout, check=True, text=True, encoding="utf-8",
                 if close_job is not None:
                     close_job()
                 elif os.name != "nt":
-                    kill_posix_tree(process, forward)
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                 elif process.poll() is None:
                     process.kill()  # Job setup failed while child was suspended.
             except Exception as exc:
@@ -164,7 +133,9 @@ def run_process(args, *, timeout, check=True, text=True, encoding="utf-8",
             finally:
                 process.wait()
         for reader in readers:
-            reader.join()
+            reader.join(READER_JOIN_SECONDS)
+        if any(reader.is_alive() for reader in readers):
+            reason = f"{reason or 'output drain blocked'}; output drain did not finish"
     if reason:
         tail = stderr.decode(encoding, errors=errors)
         raise RuntimeError(f"{os.path.basename(str(args[0]))}: {reason} (deadline {timeout:g}s); stderr tail:\n{tail}")

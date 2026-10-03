@@ -7,6 +7,7 @@ import os
 import struct
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -98,6 +99,7 @@ class ProcessTests(unittest.TestCase):
         for pid in map(int, pidfile.read_text().split()):
             self.assert_dead(pid)
 
+    @unittest.skipUnless(os.name == "nt", "Full descendant ownership is guaranteed by Windows job objects")
     def test_whole_capture_deadline_kills_nested_helper_groups(self):
         pidfile = self.root / "nested-pids"
         parentfile = self.root / "supervisor-pid"
@@ -120,6 +122,48 @@ class ProcessTests(unittest.TestCase):
                               "sys.stderr.buffer.write(b'b'*1048576)"], timeout=5, text=False)
         self.assertEqual(result.stdout, b"a" * 1048576)
         self.assertEqual(result.stderr, b"b" * 4096)
+
+    def test_blocked_forward_consumer_cannot_defeat_deadline(self):
+        class BlockedWriter:
+            def __init__(self):
+                self.blocked = threading.Event()
+                self.release = threading.Event()
+            def write(self, block):
+                self.blocked.set()
+                self.release.wait()
+            def flush(self):
+                pass
+        stdout, stderr = BlockedWriter(), BlockedWriter()
+        finished = threading.Event()
+        failures = []
+        pidfile = self.root / "forward-pid"
+        code = ("import os,sys,time; from pathlib import Path; "
+                f"Path({str(pidfile)!r}).write_text(str(os.getpid())); "
+                "print('blocked stdout', flush=True); "
+                "print('blocked stderr', file=sys.stderr, flush=True); time.sleep(60)")
+        def invoke():
+            try:
+                run_process([sys.executable, "-c", code], timeout=1.5, forward=True)
+            except RuntimeError as exc:
+                failures.append(str(exc))
+            finally:
+                finished.set()
+        worker = threading.Thread(target=invoke, daemon=True)
+        with patch("processes.sys.stdout", SimpleNamespace(buffer=stdout)), patch("processes.sys.stderr", SimpleNamespace(buffer=stderr)):
+            worker.start()
+            try:
+                self.assertTrue(stdout.blocked.wait(3), "Child never reached blocked stdout consumer")
+                self.assertTrue(stderr.blocked.wait(3), "Child never reached blocked stderr consumer")
+                returned = finished.wait(4)
+            finally:
+                stdout.release.set()
+                stderr.release.set()
+                worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(returned, "Blocked consumer defeated process deadline")
+        self.assertTrue(failures and "deadline exceeded" in failures[0])
+        self.assertIn("blocked stderr", failures[0])
+        self.assert_dead(int(pidfile.read_text()))
 
     def test_assembly_failure_cancels_pending_and_running_siblings(self):
         managed = self.root / "Human Host_Data" / "Managed"
@@ -400,16 +444,24 @@ class SnapshotTests(unittest.TestCase):
         self.assertFalse(snapshot.stage.exists())
 
     def test_interrupted_directory_swap_rolls_back(self):
-        with self.assertRaisesRegex(RuntimeError, "simulated crash"):
-            with Snapshot(self.output) as snapshot:
-                (snapshot.stage / "BUILD_INFO.md").write_text("new")
-                snapshot.prepare("new")
-                snapshot.state["phase"] = "publishing"
-                snapshot.write_journal(snapshot.state)
-                os.replace(self.output, snapshot.backup)
-                raise RuntimeError("simulated crash")
-        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
-        self.assertEqual(git(self.output, "status", "--porcelain").stdout, "")
+        for boundary in ("backup", "promotion", "git-transfer"):
+            with self.subTest(boundary=boundary):
+                with self.assertRaisesRegex(RuntimeError, "simulated crash"):
+                    with Snapshot(self.output) as snapshot:
+                        (snapshot.stage / "BUILD_INFO.md").write_text("new")
+                        snapshot.prepare("new")
+                        snapshot.state["phase"] = "publishing"
+                        snapshot.write_journal(snapshot.state)
+                        os.replace(self.output, snapshot.backup)
+                        if boundary in ("promotion", "git-transfer"):
+                            os.replace(snapshot.stage, self.output)
+                        if boundary == "git-transfer":
+                            os.replace(snapshot.backup / ".git", self.output / ".git")
+                        raise RuntimeError("simulated crash")
+                self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+                self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+                self.assertEqual(git(self.output, "status", "--porcelain").stdout, "")
+                self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
 
     def test_repeat_publication_does_not_create_commit(self):
         for _ in range(2):
@@ -543,6 +595,67 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(git(self.output, "status", "--porcelain").stdout, "")
             self.assertNotEqual(snapshot.state["prepared_commit"], self.head.strip())
 
+    def test_index_edit_during_preparation_is_preserved(self):
+        with self.assertRaisesRegex(RuntimeError, "changed during preparation"):
+            with Snapshot(self.output) as snapshot:
+                (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
+                prepare = snapshot.prepare
+                def edit_index(message):
+                    prepare(message)
+                    blob = git(self.output, "hash-object", "-w", str(snapshot.stage / "BUILD_INFO.md")).stdout.strip()
+                    git(self.output, "update-index", "--cacheinfo", f"100644,{blob},BUILD_INFO.md")
+                with patch.object(snapshot, "prepare", side_effect=edit_index):
+                    snapshot.publish("prepared")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual(git(self.output, "show", ":BUILD_INFO.md").stdout, "prepared")
+        self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+
+    def test_interrupted_reset_rolls_back_known_head_and_index_states(self):
+        for updated in ("index", "head"):
+            with self.subTest(updated=updated):
+                with self.assertRaisesRegex(RuntimeError, "interrupted reset"):
+                    with Snapshot(self.output) as snapshot:
+                        (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
+                        snapshot.prepare("prepared")
+                        snapshot.state["phase"] = "publishing"
+                        snapshot.write_journal(snapshot.state)
+                        os.replace(self.output, snapshot.backup)
+                        os.replace(snapshot.stage, self.output)
+                        os.replace(snapshot.backup / ".git", self.output / ".git")
+                        if updated == "index":
+                            git(self.output, "read-tree", snapshot.state["prepared_tree"])
+                        else:
+                            git(self.output, "update-ref", "HEAD", snapshot.state["prepared_commit"])
+                        raise RuntimeError("interrupted reset")
+                self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+                self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+                self.assertEqual(git(self.output, "status", "--porcelain").stdout, "")
+                self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+    def test_interrupted_fresh_preparation_removes_read_only_git_objects(self):
+        output = Path(self.temp.name) / "fresh"
+        snapshot = Snapshot(output).__enter__()
+        (snapshot.stage / "BUILD_INFO.md").write_text("fresh")
+        original_git = git
+        def interrupt_commit(root, *args, **kwargs):
+            if args[0] == "commit":
+                raise RuntimeError("interrupted fresh preparation")
+            return original_git(root, *args, **kwargs)
+        try:
+            with patch("snapshot.git", side_effect=interrupt_commit):
+                with self.assertRaisesRegex(RuntimeError, "interrupted fresh preparation"):
+                    snapshot.publish("fresh")
+            objects = [path for path in (snapshot.stage / ".git" / "objects").rglob("*") if path.is_file()]
+            self.assertTrue(objects, "Preparation did not create real Git objects")
+            if os.name == "nt":
+                import stat
+                self.assertTrue(any(not path.stat().st_mode & stat.S_IWRITE for path in objects))
+        finally:
+            snapshot.lock.close()
+        with Snapshot(output) as recovered:
+            self.assertFalse((recovered.stage / ".git").exists())
+        self.assertFalse(output.exists() or snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+
     def test_recovery_accepts_original_before_promotion(self):
         snapshot = Snapshot(self.output).__enter__()
         (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
@@ -595,6 +708,30 @@ class SnapshotTests(unittest.TestCase):
             with Snapshot(self.output):
                 self.fail("Accepted changed output")
         self.assertEqual((self.output / "foreign.txt").read_text(), "preserve me")
+        self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
+        self.assertTrue(snapshot.journal.exists())
+
+    def test_recovery_preserves_foreign_index_after_git_transfer(self):
+        snapshot = Snapshot(self.output).__enter__()
+        try:
+            (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
+            snapshot.prepare("prepared")
+            snapshot.state["phase"] = "publishing"
+            snapshot.write_journal(snapshot.state)
+            os.replace(self.output, snapshot.backup)
+            os.replace(snapshot.stage, self.output)
+            os.replace(snapshot.backup / ".git", self.output / ".git")
+            foreign = Path(self.temp.name) / "foreign-index.txt"
+            foreign.write_text("foreign index")
+            blob = git(self.output, "hash-object", "-w", str(foreign)).stdout.strip()
+            git(self.output, "update-index", "--cacheinfo", f"100644,{blob},BUILD_INFO.md")
+        finally:
+            snapshot.lock.close()
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous snapshot recovery"):
+            with Snapshot(self.output):
+                self.fail("Accepted an unrecognized intermediate index")
+        self.assertEqual(git(self.output, "show", ":BUILD_INFO.md").stdout, "foreign index")
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "prepared")
         self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
         self.assertTrue(snapshot.journal.exists())
 
