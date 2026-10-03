@@ -168,6 +168,20 @@ directory make publication recoverable. A failed or interrupted publication is
 rolled back on the next invocation; a completed commit is retained. Do not
 manually delete a journal or backup while a refresh is active.
 
+Git plumbing and decompiler version probes have a 2-minute deadline; each assembly
+decompilation, resource listing and bundle decoder has 20 minutes. The whole
+capture has 4 hours and the subsequent wiki update has 4 hours 10 minutes, allowing
+the wiki's 4-hour watchdog to report its own timeout. Failed or expired
+processes lose their owned Windows job or POSIX process group (descendant cleanup
+is best effort on POSIX); pipe cleanup has bounded joins even if forwarding blocks.
+An assembly failure also cancels pending and running siblings. Before promotion,
+the journal records the prepared tree, commit and index identities. Recovery
+retains that exact completed result and rolls back recognized intermediate swap
+states; unrecognized states preserve both directories and require inspection.
+A second interruption during recovery can halt as ambiguous while preserving both
+directories; the operator must scrap the incomplete capture and rerun.
+Deadlines add no timing fields to generator inputs or hashes.
+
 The command refuses dirty snapshots, ignored local files, Git remotes, and
 unrecognized output directories. Resolve such files before refreshing. Generated
 data stays out of the workspace repository and all remotes; only the separate

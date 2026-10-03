@@ -4,13 +4,16 @@ import base64
 import io
 import json
 import os
+import subprocess
 import struct
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--python-packages")
@@ -22,12 +25,217 @@ from addressables import decode, read_object
 from bundles import Bundle, MemberStream
 from catalog import Catalog, clean, source_key, rows
 from snapshot import Snapshot, git
-from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable
+from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable, decompile
+from processes import run_process
 from schemas import normalize_generated
 from game_version import capture as capture_version
 from UnityPy.helpers.TypeTreeNode import TypeTreeNode
 from UnityPy.helpers.TypeTreeHelper import read_typetree
 from UnityPy.streams import EndianBinaryReader
+
+
+class ProcessTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="hhmods-capture-process-test-")
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    @staticmethod
+    def alive(pid):
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            handle = kernel.OpenProcess(0x1000, False, pid)
+            if not handle:
+                return False
+            try:
+                code = wintypes.DWORD()
+                return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
+            finally:
+                kernel.CloseHandle(handle)
+        try:
+            os.kill(pid, 0)
+            status = Path(f"/proc/{pid}/stat")
+            return not status.exists() or status.read_text().split(")", 1)[1].strip()[0] != "Z"
+        except ProcessLookupError:
+            return False
+
+    def assert_dead(self, pid):
+        deadline = time.monotonic() + 3
+        while self.alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(self.alive(pid), f"Capture left process {pid} running")
+
+    def tree_child(self, pidfile, ending):
+        return ("import os, subprocess, sys, time; from pathlib import Path; "
+                "child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+                f"Path({str(pidfile)!r}).write_text(str(os.getpid())+' '+str(child.pid)); "
+                "sys.stderr.write('discard-me'+'x'*5000+'reported stderr marker'); sys.stderr.flush(); " + ending)
+
+    def test_deadline_kills_tree_and_reports_bounded_stderr(self):
+        pidfile = self.root / "deadline-pids"
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "deadline exceeded .*deadline 3s.*") as caught:
+            run_process([sys.executable, "-c", self.tree_child(pidfile, "time.sleep(60)")], timeout=3)
+        self.assertLess(time.monotonic() - started, 8)
+        self.assertIn(Path(sys.executable).name, str(caught.exception))
+        tail = str(caught.exception).split("stderr tail:\n", 1)[1]
+        self.assertTrue(tail.endswith("reported stderr marker"))
+        self.assertLessEqual(len(tail.encode()), 4096)
+        self.assertNotIn("discard-me", tail)
+        for pid in map(int, pidfile.read_text().split()):
+            self.assert_dead(pid)
+
+    def test_failed_parent_kills_its_surviving_grandchild(self):
+        pidfile = self.root / "failure-pids"
+        with self.assertRaisesRegex(RuntimeError, "exit 9 .*deadline 5s.*"):
+            run_process([sys.executable, "-c", self.tree_child(pidfile, "sys.exit(9)")], timeout=5)
+        for pid in map(int, pidfile.read_text().split()):
+            self.assert_dead(pid)
+
+    @unittest.skipUnless(os.name == "nt", "Full descendant ownership is guaranteed by Windows job objects")
+    def test_whole_capture_deadline_kills_nested_helper_groups(self):
+        pidfile = self.root / "nested-pids"
+        parentfile = self.root / "supervisor-pid"
+        inner = ("import os,subprocess,sys,time; from pathlib import Path; "
+                 "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+                 f"Path({str(pidfile)!r}).write_text(str(os.getpid())+' '+str(child.pid)); time.sleep(60)")
+        code = ("import os,sys; from pathlib import Path; "
+                f"sys.path.insert(0, {str(Path(__file__).parent)!r}); from processes import run_process; "
+                f"Path({str(parentfile)!r}).write_text(str(os.getpid())); "
+                f"run_process([sys.executable,'-c',{inner!r}],timeout=60)")
+        with self.assertRaisesRegex(RuntimeError, "deadline exceeded"):
+            run_process([sys.executable, "-c", code], timeout=3, forward=True)
+        for path in (parentfile, pidfile):
+            for pid in map(int, path.read_text().split()):
+                self.assert_dead(pid)
+
+    def test_concurrent_pipe_draining_preserves_binary_stdout(self):
+        result = run_process([sys.executable, "-c",
+                              "import sys; sys.stdout.buffer.write(b'a'*1048576); "
+                              "sys.stderr.buffer.write(b'b'*1048576)"], timeout=5, text=False)
+        self.assertEqual(result.stdout, b"a" * 1048576)
+        self.assertEqual(result.stderr, b"b" * 4096)
+
+    def test_blocked_forward_consumer_cannot_defeat_deadline(self):
+        class BlockedWriter:
+            def __init__(self):
+                self.blocked = threading.Event()
+                self.release = threading.Event()
+            def write(self, block):
+                self.blocked.set()
+                self.release.wait()
+            def flush(self):
+                pass
+        stdout, stderr = BlockedWriter(), BlockedWriter()
+        finished = threading.Event()
+        failures = []
+        pidfile = self.root / "forward-pid"
+        code = ("import os,sys,time; from pathlib import Path; "
+                f"Path({str(pidfile)!r}).write_text(str(os.getpid())); "
+                "print('blocked stdout', flush=True); "
+                "print('blocked stderr', file=sys.stderr, flush=True); time.sleep(60)")
+        def invoke():
+            try:
+                run_process([sys.executable, "-c", code], timeout=1.5, forward=True)
+            except RuntimeError as exc:
+                failures.append(str(exc))
+            finally:
+                finished.set()
+        worker = threading.Thread(target=invoke, daemon=True)
+        with patch("processes.sys.stdout", SimpleNamespace(buffer=stdout)), patch("processes.sys.stderr", SimpleNamespace(buffer=stderr)):
+            worker.start()
+            try:
+                self.assertTrue(stdout.blocked.wait(3), "Child never reached blocked stdout consumer")
+                self.assertTrue(stderr.blocked.wait(3), "Child never reached blocked stderr consumer")
+                returned = finished.wait(4)
+            finally:
+                stdout.release.set()
+                stderr.release.set()
+                worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(returned, "Blocked consumer defeated process deadline")
+        self.assertTrue(failures and "deadline exceeded" in failures[0])
+        self.assertIn("blocked stderr", failures[0])
+        self.assert_dead(int(pidfile.read_text()))
+
+    def test_failed_termination_has_a_finite_reap_deadline(self):
+        wait = Mock(side_effect=subprocess.TimeoutExpired("stand-in", 30))
+        process = SimpleNamespace(stdout=io.BytesIO(), stderr=io.BytesIO(), pid=123,
+                                  returncode=None, poll=lambda: None, wait=wait)
+        cleanup = Mock(side_effect=OSError("tree termination failed"))
+        with patch("processes.subprocess.Popen", return_value=process), patch("processes.windows_job", return_value=cleanup), patch("processes.os.name", "nt"):
+            with self.assertRaisesRegex(RuntimeError, "tree termination failed.*still alive"):
+                run_process(["stand-in"], timeout=0)
+        wait.assert_called_once_with(timeout=30)
+
+    def test_cli_exits_when_neither_output_pipe_is_drained(self):
+        pidfile = self.root / "cli-child-pid"
+        code = ("import os,sys,threading,time; from pathlib import Path; "
+                f"Path({str(pidfile)!r}).write_text(str(os.getpid())); "
+                "threading.Thread(target=lambda: sys.stdout.buffer.write(b'o'*1048576)).start(); "
+                "sys.stderr.buffer.write(b'e'*1048576); sys.stderr.buffer.flush(); time.sleep(60)")
+        runner = Path(__file__).with_name("processes.py")
+        started = time.monotonic()
+        child = subprocess.Popen([sys.executable, str(runner), "1.5", sys.executable, "-c", code],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            # 1.5s deadline, two 1s pipe joins, 1s diagnostic join, startup slack.
+            self.assertEqual(child.wait(timeout=7.5), 1)
+            self.assertLess(time.monotonic() - started, 7.5)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+            child.stdout.close()
+            child.stderr.close()
+        self.assert_dead(int(pidfile.read_text()))
+
+    def test_assembly_failure_cancels_pending_and_running_siblings(self):
+        managed = self.root / "Human Host_Data" / "Managed"
+        managed.mkdir(parents=True)
+        for name in ["a-fail", "b-sibling", *[f"z-pending-{i}" for i in range(12)]]:
+            (managed / (name + ".dll")).write_bytes(b"synthetic assembly")
+        stage = self.root / "stage"
+        stage.mkdir()
+        sibling = self.root / "b-sibling.pids"
+        cancellations = []
+        futures = []
+        from concurrent.futures import ThreadPoolExecutor
+        class RecordingExecutor(ThreadPoolExecutor):
+            def submit(self, *args, **kwargs):
+                future = super().submit(*args, **kwargs)
+                futures.append(future)
+                return future
+        def standin(args, **kwargs):
+            name = Path(args[-1]).stem
+            cancellations.append(kwargs["cancel"])
+            if name == "a-fail":
+                code = ("import sys,time; from pathlib import Path\n"
+                        f"while not Path({str(sibling)!r}).exists(): time.sleep(0.01)\n"
+                        "sys.stderr.write('assembly stand-in failed'); sys.exit(7)")
+            else:
+                code = self.tree_child(self.root / (name + ".pids"), "time.sleep(60)")
+            return run_process([sys.executable, "-c", code], timeout=5, cancel=kwargs["cancel"])
+        started = time.monotonic()
+        with patch("refresh.run_process", side_effect=standin), patch("refresh.concurrent.futures.ThreadPoolExecutor", RecordingExecutor):
+            with self.assertRaisesRegex(RuntimeError, "assembly stand-in failed"):
+                decompile(self.root, stage, None, 2)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertTrue(cancellations and all(event.is_set() for event in cancellations))
+        self.assertTrue(any(future.cancelled() for future in futures))
+        self.assertTrue(all(future.done() for future in futures))
+        self.assertTrue(sibling.exists())
+        for pidfile in self.root.glob("*.pids"):
+            for pid in map(int, pidfile.read_text().split()):
+                self.assert_dead(pid)
 
 
 class BundleTests(unittest.TestCase):
@@ -239,8 +447,9 @@ class DataTests(unittest.TestCase):
 
 class SnapshotTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.output = Path(self.temp.name) / "code"
+        self.temp = tempfile.TemporaryDirectory(prefix="hhmods-capture-snapshot-test-")
+        # Canonical form: Windows runners hand out 8.3 short temp paths.
+        self.output = Path(os.path.realpath(self.temp.name)) / "code"
         self.output.mkdir()
         (self.output / "BUILD_INFO.md").write_text("old")
         git(self.output, "init", "--quiet")
@@ -269,17 +478,24 @@ class SnapshotTests(unittest.TestCase):
         self.assertFalse(snapshot.stage.exists())
 
     def test_interrupted_directory_swap_rolls_back(self):
-        with self.assertRaisesRegex(RuntimeError, "simulated crash"):
-            with Snapshot(self.output) as snapshot:
-                (snapshot.stage / "BUILD_INFO.md").write_text("new")
-                snapshot.state["phase"] = "publishing"
-                snapshot.write_journal(snapshot.state)
-                os.replace(self.output, snapshot.backup)
-                os.replace(snapshot.stage, self.output)
-                os.replace(snapshot.backup / ".git", self.output / ".git")
-                raise RuntimeError("simulated crash")
-        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
-        self.assertEqual(git(self.output, "status", "--porcelain").stdout, "")
+        for boundary in ("backup", "promotion", "git-transfer"):
+            with self.subTest(boundary=boundary):
+                with self.assertRaisesRegex(RuntimeError, "simulated crash"):
+                    with Snapshot(self.output) as snapshot:
+                        (snapshot.stage / "BUILD_INFO.md").write_text("new")
+                        snapshot.prepare("new")
+                        snapshot.state["phase"] = "publishing"
+                        snapshot.write_journal(snapshot.state)
+                        os.replace(self.output, snapshot.backup)
+                        if boundary in ("promotion", "git-transfer"):
+                            os.replace(snapshot.stage, self.output)
+                        if boundary == "git-transfer":
+                            os.replace(snapshot.backup / ".git", self.output / ".git")
+                        raise RuntimeError("simulated crash")
+                self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+                self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+                self.assertEqual(git(self.output, "status", "--porcelain").stdout, "")
+                self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
 
     def test_repeat_publication_does_not_create_commit(self):
         for _ in range(2):
@@ -379,6 +595,239 @@ class SnapshotTests(unittest.TestCase):
             os.utime(target, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns))
             snapshot.publish("same size and timestamp")
         self.assertEqual(git(self.output, "show", "HEAD:BUILD_INFO.md").stdout, "new")
+
+    def interrupted_promotion(self):
+        snapshot = Snapshot(self.output).__enter__()
+        (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
+        snapshot.prepare("prepared")
+        snapshot.state["phase"] = "publishing"
+        snapshot.write_journal(snapshot.state)
+        os.replace(self.output, snapshot.backup)
+        os.replace(snapshot.stage, self.output)
+        os.replace(snapshot.backup / ".git", self.output / ".git")
+        git(self.output, "reset", "--mixed", snapshot.state["prepared_commit"])
+        snapshot.lock.close()
+        return snapshot
+
+    def test_recovery_accepts_exact_journaled_result(self):
+        snapshot = self.interrupted_promotion()
+        state = json.loads(snapshot.journal.read_text())
+        self.assertEqual(state["prepared_commit"], git(self.output, "rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(state["prepared_tree"], git(self.output, "rev-parse", "HEAD^{tree}").stdout.strip())
+        with Snapshot(self.output):
+            pass
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "prepared")
+        self.assertFalse(snapshot.backup.exists() or snapshot.journal.exists())
+
+    def test_interrupted_probe_accepts_equivalent_journal_path(self):
+        snapshot = self.interrupt_probe()
+        parent = str(self.output.parent)
+        if os.name == "nt":
+            import ctypes
+            short = ctypes.create_unicode_buffer(32768)
+            if ctypes.windll.kernel32.GetShortPathNameW(parent, short, len(short)):
+                parent = short.value
+            parent = parent.swapcase()
+        alias = os.path.join(parent, ".", self.output.name)
+        state = json.loads(snapshot.journal.read_text())
+        state["output"] = alias
+        snapshot.write_journal(state)
+        with Snapshot(self.output):
+            pass
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+        self.assertFalse(snapshot.backup.exists() or snapshot.journal.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows read-only bit prevents unlink")
+    def test_read_only_repair_never_changes_non_git_files(self):
+        import stat
+        snapshot = Snapshot(self.output)
+        for root in (snapshot.stage, snapshot.backup):
+            with self.subTest(root=root):
+                root.mkdir()
+                protected = root / "protected.txt"
+                protected.write_text("preserve protection")
+                os.chmod(protected, stat.S_IREAD)
+                try:
+                    with self.assertRaises(PermissionError):
+                        snapshot.remove_owned(root)
+                    self.assertEqual(protected.read_text(), "preserve protection")
+                    self.assertFalse(protected.stat().st_mode & stat.S_IWRITE)
+                finally:
+                    if protected.exists():
+                        os.chmod(protected, stat.S_IREAD | stat.S_IWRITE)
+                    snapshot.remove_owned(root)
+
+    def test_preparation_preserves_original_head_and_index(self):
+        with Snapshot(self.output) as snapshot:
+            (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
+            original_tree = git(self.output, "write-tree").stdout
+            snapshot.prepare("prepared")
+            self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+            self.assertEqual(git(self.output, "write-tree").stdout, original_tree)
+            self.assertEqual(git(self.output, "status", "--porcelain").stdout, "")
+            self.assertNotEqual(snapshot.state["prepared_commit"], self.head.strip())
+
+    def test_index_edit_during_preparation_is_preserved(self):
+        with self.assertRaisesRegex(RuntimeError, "changed during preparation"):
+            with Snapshot(self.output) as snapshot:
+                (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
+                prepare = snapshot.prepare
+                def edit_index(message):
+                    prepare(message)
+                    blob = git(self.output, "hash-object", "-w", str(snapshot.stage / "BUILD_INFO.md")).stdout.strip()
+                    git(self.output, "update-index", "--cacheinfo", f"100644,{blob},BUILD_INFO.md")
+                with patch.object(snapshot, "prepare", side_effect=edit_index):
+                    snapshot.publish("prepared")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+        self.assertEqual(git(self.output, "show", ":BUILD_INFO.md").stdout, "prepared")
+        self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+
+    def test_interrupted_reset_rolls_back_known_head_and_index_states(self):
+        for updated in ("index", "head"):
+            with self.subTest(updated=updated):
+                with self.assertRaisesRegex(RuntimeError, "interrupted reset"):
+                    with Snapshot(self.output) as snapshot:
+                        (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
+                        snapshot.prepare("prepared")
+                        snapshot.state["phase"] = "publishing"
+                        snapshot.write_journal(snapshot.state)
+                        os.replace(self.output, snapshot.backup)
+                        os.replace(snapshot.stage, self.output)
+                        os.replace(snapshot.backup / ".git", self.output / ".git")
+                        if updated == "index":
+                            git(self.output, "read-tree", snapshot.state["prepared_tree"])
+                        else:
+                            git(self.output, "update-ref", "HEAD", snapshot.state["prepared_commit"])
+                        raise RuntimeError("interrupted reset")
+                self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+                self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+                self.assertEqual(git(self.output, "status", "--porcelain").stdout, "")
+                self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+    def test_interrupted_fresh_preparation_removes_read_only_git_objects(self):
+        output = Path(self.temp.name) / "fresh"
+        snapshot = Snapshot(output).__enter__()
+        (snapshot.stage / "BUILD_INFO.md").write_text("fresh")
+        original_git = git
+        def interrupt_commit(root, *args, **kwargs):
+            if args[0] == "commit":
+                raise RuntimeError("interrupted fresh preparation")
+            return original_git(root, *args, **kwargs)
+        try:
+            with patch("snapshot.git", side_effect=interrupt_commit):
+                with self.assertRaisesRegex(RuntimeError, "interrupted fresh preparation"):
+                    snapshot.publish("fresh")
+            objects = [path for path in (snapshot.stage / ".git" / "objects").rglob("*") if path.is_file()]
+            self.assertTrue(objects, "Preparation did not create real Git objects")
+            if os.name == "nt":
+                import stat
+                self.assertTrue(any(not path.stat().st_mode & stat.S_IWRITE for path in objects))
+        finally:
+            snapshot.lock.close()
+        with Snapshot(output) as recovered:
+            self.assertFalse((recovered.stage / ".git").exists())
+        self.assertFalse(output.exists() or snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+
+    def test_recovery_accepts_original_before_promotion(self):
+        snapshot = Snapshot(self.output).__enter__()
+        (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
+        snapshot.prepare("prepared")
+        snapshot.state["phase"] = "publishing"
+        snapshot.write_journal(snapshot.state)
+        snapshot.lock.close()
+        with Snapshot(self.output):
+            pass
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "old")
+        self.assertFalse(snapshot.stage.exists() or snapshot.backup.exists() or snapshot.journal.exists())
+
+    def test_no_git_publication_uses_exact_content_identity(self):
+        output = Path(self.temp.name) / "no-git-code"
+        with Snapshot(output, no_git=True) as snapshot:
+            (snapshot.stage / "BUILD_INFO.md").write_text("diagnostic")
+            snapshot.publish("diagnostic")
+        self.assertEqual((output / "BUILD_INFO.md").read_text(), "diagnostic")
+        self.assertFalse((output / ".git").exists())
+        self.assertFalse(snapshot.journal.exists())
+
+    def test_recovery_preserves_both_directories_for_foreign_clean_commit(self):
+        for same_tree in (True, False):
+            with self.subTest(same_tree=same_tree):
+                snapshot = self.interrupted_promotion()
+                if not same_tree:
+                    (self.output / "BUILD_INFO.md").write_text("foreign")
+                    git(self.output, "add", "-A")
+                git(self.output, "commit", "--quiet", "--allow-empty", "-m", "foreign commit")
+                foreign_head = git(self.output, "rev-parse", "HEAD").stdout
+                with self.assertRaisesRegex(RuntimeError, "matches neither.*preserving"):
+                    with Snapshot(self.output):
+                        self.fail("Accepted a foreign clean commit")
+                self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, foreign_head)
+                self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
+                self.assertTrue(snapshot.journal.exists())
+                # Restore the fixture explicitly for the next independent case.
+                os.replace(self.output / ".git", snapshot.backup / ".git")
+                import shutil
+                shutil.rmtree(self.output)
+                os.replace(snapshot.backup, self.output)
+                git(self.output, "reset", "--mixed", self.head.strip())
+                snapshot.journal.unlink()
+
+    def test_recovery_preserves_uncommitted_foreign_files(self):
+        snapshot = self.interrupted_promotion()
+        (self.output / "foreign.txt").write_text("preserve me")
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous snapshot recovery"):
+            with Snapshot(self.output):
+                self.fail("Accepted changed output")
+        self.assertEqual((self.output / "foreign.txt").read_text(), "preserve me")
+        self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
+        self.assertTrue(snapshot.journal.exists())
+
+    def test_recovery_preserves_foreign_index_after_git_transfer(self):
+        snapshot = Snapshot(self.output).__enter__()
+        try:
+            (snapshot.stage / "BUILD_INFO.md").write_text("prepared")
+            snapshot.prepare("prepared")
+            snapshot.state["phase"] = "publishing"
+            snapshot.write_journal(snapshot.state)
+            os.replace(self.output, snapshot.backup)
+            os.replace(snapshot.stage, self.output)
+            os.replace(snapshot.backup / ".git", self.output / ".git")
+            foreign = Path(self.temp.name) / "foreign-index.txt"
+            foreign.write_text("foreign index")
+            blob = git(self.output, "hash-object", "-w", str(foreign)).stdout.strip()
+            git(self.output, "update-index", "--cacheinfo", f"100644,{blob},BUILD_INFO.md")
+        finally:
+            snapshot.lock.close()
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous snapshot recovery"):
+            with Snapshot(self.output):
+                self.fail("Accepted an unrecognized intermediate index")
+        self.assertEqual(git(self.output, "show", ":BUILD_INFO.md").stdout, "foreign index")
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "prepared")
+        self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
+        self.assertTrue(snapshot.journal.exists())
+
+    def test_second_interruption_during_recovery_preserves_both_directories(self):
+        snapshot = self.interrupted_promotion()
+        # Leave a recognized partial reset: prepared HEAD, original index.
+        git(self.output, "read-tree", self.head.strip())
+        replace = os.replace
+        def interrupt_first_mutation(source, destination):
+            replace(source, destination)
+            if Path(source) == self.output / ".git":
+                raise RuntimeError("recovery interrupted after first mutation")
+        with patch("snapshot.os.replace", side_effect=interrupt_first_mutation):
+            with self.assertRaisesRegex(RuntimeError, "after first mutation"):
+                snapshot.recover()
+        with self.assertRaisesRegex(RuntimeError, "operator must scrap.*rerun") as caught:
+            with Snapshot(self.output):
+                self.fail("Second recovery interruption was accepted")
+        self.assertIn(str(self.output), str(caught.exception))
+        self.assertIn(str(snapshot.backup), str(caught.exception))
+        self.assertEqual((self.output / "BUILD_INFO.md").read_text(), "prepared")
+        self.assertEqual((snapshot.backup / "BUILD_INFO.md").read_text(), "old")
+        self.assertTrue((snapshot.backup / ".git").exists() and snapshot.journal.exists())
 
 
 if __name__ == "__main__":

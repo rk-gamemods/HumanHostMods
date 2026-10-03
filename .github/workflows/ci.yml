@@ -29,6 +29,20 @@ jobs:
       - name: Catalog tests
         run: python tools/game_catalog/test_catalog.py --python-packages .cache/catalog-python
 
+  catalog-windows:
+    name: Catalog tests (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install catalog dependencies
+        run: python -m pip install --target .cache/catalog-python -r tools/game_catalog/requirements.txt
+      - name: Catalog tests
+        run: python tools/game_catalog/test_catalog.py --python-packages .cache/catalog-python
+
   powershell:
     name: PowerShell parse check
     runs-on: ubuntu-latest

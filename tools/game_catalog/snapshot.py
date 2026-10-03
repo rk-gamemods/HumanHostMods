@@ -1,14 +1,38 @@
 """Recoverable snapshot publication with an OS-held single-writer lock."""
 import json
+import hashlib
 import os
 import shutil
-import subprocess
+import stat
 from pathlib import Path
+from processes import run_process, GIT_SECONDS
 
 
-def git(output, *args, check=True):
-    return subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(output), *args], text=True, encoding="utf-8",
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check)
+def git(output, *args, check=True, env=None):
+    return run_process(["git", "-c", "core.fsmonitor=false", "-C", str(output), *args],
+                       timeout=GIT_SECONDS, check=check, env=env)
+
+
+def index_signature(output, env=None):
+    entries = git(output, "ls-files", "--stage", "-z", env=env).stdout
+    return hashlib.sha256(entries.encode("utf-8")).hexdigest()
+
+
+def file_tree(root):
+    """Content identity for recovery, including no-Git diagnostic captures."""
+    result = hashlib.sha256()
+    for directory, folders, names in os.walk(root):
+        if Path(directory) == root:
+            folders[:] = [name for name in folders if name != ".git"]
+        for name in sorted(names):
+            path = Path(directory) / name
+            content = hashlib.sha256()
+            with path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    content.update(block)
+            result.update(json.dumps([path.relative_to(root).as_posix(), content.hexdigest()]).encode("utf-8"))
+        folders.sort()
+    return result.hexdigest()
 
 
 class Snapshot:
@@ -37,7 +61,16 @@ class Snapshot:
         if path not in (self.stage, self.backup) or path.parent != self.output.parent or path.is_symlink():
             raise ValueError(f"Refusing unexpected cleanup path: {path}")
         if path.exists():
-            shutil.rmtree(path)
+            def retry(function, target, exc):
+                mode = os.stat(target).st_mode
+                git_dir = path / ".git"
+                if (os.name != "nt" or not isinstance(exc, PermissionError) or mode & stat.S_IWRITE or
+                        not git_dir.is_dir() or not Path(target).resolve().is_relative_to(git_dir)):
+                    raise exc
+                # Git's owned loose objects are read-only on Windows.
+                os.chmod(target, mode | stat.S_IWRITE)
+                function(target)
+            shutil.rmtree(path, onexc=retry)
 
     def move_output_to_backup(self):
         # Windows refuses to rename a directory while any process holds a handle
@@ -64,8 +97,10 @@ class Snapshot:
                 raise RuntimeError("Unowned staging/backup directory exists; inspect it before retrying.")
             return
         state = json.loads(self.journal.read_text(encoding="utf-8"))
-        if state["output"] != str(self.output):
+        if os.path.normcase(os.path.realpath(state["output"])) != os.path.normcase(os.path.realpath(self.output)):
             raise RuntimeError("Snapshot journal belongs to a different output path")
+        if state["phase"] not in ("staging", "publishing", "committed"):
+            raise RuntimeError("Unknown snapshot journal phase; preserving all directories")
         if state["phase"] == "staging" and self.backup.exists():
             # Only the publication probe moves the output before publishing, so this
             # backup is the original snapshot. Never infer a commit from it.
@@ -73,10 +108,53 @@ class Snapshot:
                 raise RuntimeError(f"{self.output} and {self.backup} both exist after an interrupted probe; "
                                    "inspect both before retrying.")
             os.replace(self.backup, self.output)
-        committed = state["phase"] == "committed"
-        if not committed and state["phase"] == "publishing" and (self.output / ".git").exists() and state.get("head"):
-            head = git(self.output, "rev-parse", "HEAD", check=False).stdout.strip()
-            committed = head != state["head"] and not git(self.output, "status", "--porcelain").stdout.strip()
+        committed = False
+        if state["phase"] in ("publishing", "committed"):
+            def ambiguous():
+                raise RuntimeError(f"Ambiguous snapshot recovery: {self.output} matches neither the original "
+                                   "nor a journaled publication state; stopping safely and preserving both directories "
+                                   f"{self.output} and {self.backup}, plus staging {self.stage}. "
+                                   "A second interruption during recovery can leave this state; "
+                                   "the operator must scrap the incomplete capture and rerun.")
+            def identity(root):
+                if not (root / ".git").is_dir():
+                    return None, None, None
+                return (git(root, "rev-parse", "HEAD", check=False).stdout.strip(),
+                        git(root, "rev-parse", "HEAD^{tree}", check=False).stdout.strip(), index_signature(root))
+            original_git = (state.get("head"), state.get("original_git_tree"), state.get("original_index"))
+            prepared_git = (state.get("prepared_commit"), state.get("prepared_tree"), state.get("prepared_index"))
+            backup_git = (self.backup / ".git").is_dir()
+            output_git = (self.output / ".git").is_dir()
+            if self.stage.exists() and file_tree(self.stage) != state.get("prepared_files"):
+                ambiguous()
+            if self.backup.exists():
+                if (file_tree(self.backup) != state.get("original_tree") or
+                        (backup_git and (output_git or identity(self.backup) != original_git))):
+                    ambiguous()
+            if self.output.exists():
+                observed = identity(self.output)
+                files = file_tree(self.output)
+                clean = not output_git or not (
+                    git(self.output, "status", "--porcelain=v2", "--untracked-files=all").stdout.strip() or
+                    git(self.output, "ls-files", "--others", "--ignored", "--exclude-standard").stdout.strip())
+                committed = (files == state.get("prepared_files") and observed == prepared_git and
+                             (clean or state.get("no_git", False)))
+                original = (state["phase"] == "publishing" and files == state.get("original_tree") and
+                            observed == original_git and clean)
+                # Promotion leaves the original Git directory in backup; transfer
+                # then leaves the original HEAD/index beside the prepared files.
+                # A reset may have installed only its index or only its HEAD.
+                intermediate = (state["phase"] == "publishing" and self.backup.exists() and not self.stage.exists() and
+                                files == state.get("prepared_files") and state.get("head") and (
+                                    (not output_git and backup_git) or
+                                    (output_git and not backup_git and observed in (
+                                        original_git,
+                                        (original_git[0], original_git[1], prepared_git[2]),
+                                        (prepared_git[0], prepared_git[1], original_git[2])))))
+                if not committed and not original and not intermediate:
+                    ambiguous()
+            elif state["phase"] == "committed" or (state.get("existed") and (not self.backup.exists() or not backup_git)):
+                ambiguous()
         if self.backup.exists() and not committed:
             if self.output.exists():
                 if (self.output / ".git").exists() and not (self.backup / ".git").exists():
@@ -122,9 +200,13 @@ class Snapshot:
                         raise RuntimeError("Game snapshots must have no Git remotes")
                     if git(self.output, "ls-files", "--others", "--ignored", "--exclude-standard").stdout.strip():
                         raise RuntimeError("Snapshot contains ignored local files. Preserve or remove them before refreshing.")
-            self.state = {"output": str(self.output), "phase": "staging", "head": None, "existed": self.output.exists()}
+            self.state = {"output": str(self.output), "phase": "staging", "head": None,
+                          "existed": self.output.exists(), "no_git": self.no_git,
+                          "original_tree": file_tree(self.output), "original_git_tree": None, "original_index": None}
             if (self.output / ".git").exists():
                 self.state["head"] = git(self.output, "rev-parse", "HEAD").stdout.strip()
+                self.state["original_git_tree"] = git(self.output, "rev-parse", "HEAD^{tree}").stdout.strip()
+                self.state["original_index"] = index_signature(self.output)
             self.original_files = self.fingerprint()
             self.write_journal(self.state)
             if self.state["existed"]:
@@ -148,6 +230,13 @@ class Snapshot:
         if self.state["head"]:
             if git(self.output, "rev-parse", "HEAD").stdout.strip() != self.state["head"] or git(self.output, "status", "--porcelain").stdout.strip():
                 raise RuntimeError("The snapshot Git state changed during generation")
+        self.prepare(message)
+        if file_tree(self.output) != self.state["original_tree"] or (
+                self.state["head"] and (
+                    git(self.output, "rev-parse", "HEAD").stdout.strip() != self.state["head"] or
+                    index_signature(self.output) != self.state["original_index"] or
+                    git(self.output, "status", "--porcelain=v2", "--untracked-files=all").stdout.strip())):
+            raise RuntimeError("The existing snapshot changed during preparation; preserving those changes")
         self.state["phase"] = "publishing"
         self.write_journal(self.state)
         if self.output.exists():
@@ -156,20 +245,49 @@ class Snapshot:
         if (self.backup / ".git").exists():
             os.replace(self.backup / ".git", self.output / ".git")
         if not self.no_git:
-            if not (self.output / ".git").exists():
-                git(self.output, "init", "--quiet")
-            git(self.output, "add", "-A")
-            # Directory replacement can preserve size and coarse file timestamps.
-            # Force content hashing even if Git's cached stat data happens to match.
-            git(self.output, "add", "--renormalize", ".")
-            changed = git(self.output, "diff", "--cached", "--quiet", check=False)
-            if changed.returncode == 1:
-                git(self.output, "commit", "--quiet", "-m", message)
-            elif changed.returncode:
-                raise RuntimeError(changed.stderr)
+            git(self.output, "reset", "--mixed", self.state["prepared_commit"])
         self.state["phase"] = "committed"
         self.write_journal(self.state)
         self.recover()
+
+    def prepare(self, message):
+        """Create the exact commit without changing the original HEAD or index."""
+        self.state["prepared_files"] = file_tree(self.stage)
+        self.state["prepared_commit"] = self.state["head"]
+        self.state["prepared_tree"] = None
+        self.state["prepared_index"] = self.state["original_index"]
+        if self.no_git:
+            if self.state["head"]:
+                self.state["prepared_tree"] = git(self.output, "rev-parse", "HEAD^{tree}").stdout.strip()
+            return
+        if self.state["head"]:
+            index_dir = self.stage / ".git"
+            index_dir.mkdir()
+            index = index_dir / "index"
+            environment = dict(os.environ, GIT_INDEX_FILE=str(index))
+            try:
+                git(self.output, "read-tree", self.state["head"], env=environment)
+                git(self.output, "--work-tree", str(self.stage), "add", "-A", env=environment)
+                # Hash content even when size and coarse timestamps match.
+                git(self.output, "--work-tree", str(self.stage), "add", "--renormalize", ".", env=environment)
+                tree = git(self.output, "write-tree", env=environment).stdout.strip()
+                self.state["prepared_index"] = index_signature(self.output, env=environment)
+                if tree == git(self.output, "rev-parse", "HEAD^{tree}").stdout.strip():
+                    commit = self.state["head"]
+                else:
+                    commit = git(self.output, "commit-tree", tree, "-p", self.state["head"], "-m", message).stdout.strip()
+            finally:
+                for path in index_dir.iterdir():
+                    path.unlink()
+                index_dir.rmdir()
+        else:
+            git(self.stage, "init", "--quiet")
+            git(self.stage, "add", "-A")
+            git(self.stage, "commit", "--quiet", "-m", message)
+            tree = git(self.stage, "rev-parse", "HEAD^{tree}").stdout.strip()
+            commit = git(self.stage, "rev-parse", "HEAD").stdout.strip()
+            self.state["prepared_index"] = index_signature(self.stage)
+        self.state.update(prepared_tree=tree, prepared_commit=commit)
 
     def __exit__(self, kind, value, traceback):
         try:
