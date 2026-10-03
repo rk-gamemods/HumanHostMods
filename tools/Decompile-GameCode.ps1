@@ -38,13 +38,17 @@ if (-not $PythonPackagesPath) {
     $defaultPackages = Join-Path $script:RepoRoot '.cache\catalog-python'
     if (Test-Path -LiteralPath $defaultPackages) { $PythonPackagesPath = $defaultPackages }
 }
+$captureTiming = $null
 $arguments = @('-3', (Join-Path $PSScriptRoot 'game_catalog\refresh.py'), '--game', $GameDir,
     '--output', $OutputPath, '--workers', "$ThrottleLimit")
 if ($PythonPackagesPath) { $arguments += @('--python-packages', $PythonPackagesPath) }
 if ($Assemblies) { $arguments += '--assemblies'; $arguments += $Assemblies }
 if ($NoGit) { $arguments += '--no-git' }
 # -All remains accepted for existing callers. Full non-framework coverage is now the default.
-& py -3 (Join-Path $PSScriptRoot 'game_catalog\processes.py') 14400 py @arguments
+& py -3 (Join-Path $PSScriptRoot 'game_catalog\timing.py') 14400 py @arguments | ForEach-Object {
+    if ($_ -match '^CAPTURE_TIMING_RECEIPT=(.+)$') { $captureTiming = $Matches[1] }
+    else { Write-Host $_ }
+}
 if ($LASTEXITCODE -ne 0) { throw "Game codebase refresh failed (exit $LASTEXITCODE)." }
 if ($SkipWiki -or $NoGit -or $Assemblies) {
     Write-Host 'Wiki update skipped: source-only or partial diagnostic capture requested.'
@@ -57,5 +61,14 @@ if (-not (Test-Path -LiteralPath $wikiCommand -PathType Leaf)) {
 }
 # Allow the wiki's own 4-hour watchdog to record its timeout, plus 10 minutes
 # for reporting and cleanup, before the outer runner terminates its process tree.
-& py -3 (Join-Path $PSScriptRoot 'game_catalog\processes.py') 15000 py -3 $wikiCommand update --source $OutputPath --operator-report
+$wikiArguments = @('-3', $wikiCommand, 'update', '--source', $OutputPath, '--operator-report')
+$timingSupported = $false
+try {
+    $wikiHelp = & py -3 (Join-Path $PSScriptRoot 'game_catalog\processes.py') 120 py -3 $wikiCommand update --help
+    $timingSupported = $LASTEXITCODE -eq 0 -and ($wikiHelp -join "`n") -match '(?<![\w-])--capture-timing(?![\w-])'
+} catch { $timingSupported = $false }
+if ($timingSupported -and $captureTiming) {
+    $wikiArguments += @('--capture-timing', $captureTiming)
+}
+& py -3 (Join-Path $PSScriptRoot 'game_catalog\processes.py') 15000 py @wikiArguments
 if ($LASTEXITCODE -ne 0) { throw "Capture completed; wiki update failed (exit $LASTEXITCODE). See the execution-failure report above." }

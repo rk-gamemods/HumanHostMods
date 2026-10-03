@@ -17,21 +17,26 @@ from unittest.mock import Mock, patch
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--python-packages")
+parser.add_argument("--without-unitypy", action="store_true", help="Run process, snapshot and input-identity tests without Unity dependencies")
 options, remaining = parser.parse_known_args()
 if options.python_packages:
     sys.path.insert(0, options.python_packages)
 
-from addressables import decode, read_object
-from bundles import Bundle, MemberStream
-from catalog import Catalog, clean, source_key, rows
+if not options.without_unitypy:
+    from addressables import decode, read_object
+    from bundles import Bundle, MemberStream
+    from catalog import Catalog, clean, source_key, rows
+    from schemas import normalize_generated
+    from UnityPy.helpers.TypeTreeNode import TypeTreeNode
+    from UnityPy.helpers.TypeTreeHelper import read_typetree
+    from UnityPy.streams import EndianBinaryReader
 from snapshot import Snapshot, git
 from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable, decompile
 from processes import run_process
-from schemas import normalize_generated
 from game_version import capture as capture_version
-from UnityPy.helpers.TypeTreeNode import TypeTreeNode
-from UnityPy.helpers.TypeTreeHelper import read_typetree
-from UnityPy.streams import EndianBinaryReader
+from timing import Timing, PHASES, RUNS
+from test_timing import TimingTests
+import refresh
 
 
 class ProcessTests(unittest.TestCase):
@@ -468,6 +473,103 @@ class SnapshotTests(unittest.TestCase):
         shutil.rmtree(self.temp.name, onexc=retry)
         self.temp.cleanup()
 
+    def timed_capture(self, failure=None, force=False):
+        if not hasattr(self, "timing_directory"):
+            RUNS.mkdir(parents=True, exist_ok=True)
+            self.timing_directory = tempfile.TemporaryDirectory(prefix="catalog-timing-test-", dir=RUNS)
+            self.addCleanup(self.timing_directory.cleanup)
+        game = self.output.parent / "synthetic game"
+        managed = game / "Human Host_Data" / "Managed"
+        managed.mkdir(parents=True, exist_ok=True)
+        (managed / "Player.dll").write_bytes(b"synthetic assembly")
+        (managed / "System.dll").write_bytes(b"synthetic framework")
+        versions = {"UnityPy": "1.25.3", "TypeTreeGeneratorAPI": "0.0.10"}
+        def export(catalog):
+            if failure:
+                raise RuntimeError(failure)
+            catalog.mkdir(parents=True, exist_ok=True)
+            (catalog / "coverage.json").write_text('{"decode_failures": []}')
+            return []
+        def catalog(game, output):
+            return SimpleNamespace(records={"settings": {"id": "bundle#1", "type": "PlayerSettings",
+                                   "fields": {"bundleVersion": "1.2"}}}, files={"bundle": {"source": "Managed/Player.dll"}},
+                                   export=lambda: export(output))
+        def process(args, **kwargs):
+            if "-o" in args:
+                (Path(args[args.index("-o") + 1]) / "synthetic.cs").write_text("// synthetic fixture\n")
+            return SimpleNamespace(returncode=0, stdout="stand-in decompiler\n")
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            stack.enter_context(patch("timing.RUNS", Path(self.timing_directory.name)))
+            stack.enter_context(patch("refresh.sys.argv", ["refresh.py", "--game", str(game), "--output", str(self.output)]))
+            stack.enter_context(patch("refresh.importlib.metadata.version", side_effect=lambda name: versions.get(name, "fixture")))
+            stack.enter_context(patch("refresh.shutil.which", return_value="stand-in"))
+            stack.enter_context(patch("refresh.run_process", side_effect=process))
+            stack.enter_context(patch("catalog.Catalog", side_effect=catalog))
+            stack.enter_context(patch("refresh.sys.stderr", new_callable=io.StringIO))
+            if force:
+                stack.enter_context(patch("refresh.reusable_capture", return_value=False))
+            timing = Timing(self.output)
+            timing.drain()
+            self.last_timing_receipt = timing.receipt
+            error = None
+            try:
+                refresh.main(timing)
+            except BaseException as exc:
+                error = exc
+                raise
+            finally:
+                timing.finish(error)
+                self.assertIn("total", sys.stderr.getvalue())
+        return timing.receipt
+
+    def assert_receipt(self, path, outcome, phases):
+        receipt = json.loads(path.read_text())
+        self.assertEqual(receipt["schema"], "humanhost.capture-timing.v1")
+        self.assertEqual(receipt["outcome"], outcome)
+        self.assertEqual([row["name"] for row in receipt["phases"]], list(PHASES))
+        self.assertEqual([row["outcome"] for row in receipt["phases"]], phases)
+        self.assertTrue(receipt["started_at"].endswith("Z") and receipt["finished_at"].endswith("Z"))
+        self.assertGreater(receipt["seconds"], 0)
+        self.assertTrue(all(row["seconds"] >= 0 for row in receipt["phases"] + receipt["assemblies"]))
+        self.assertFalse(path.with_suffix(".pending").exists())
+        self.assertFalse(path.with_suffix(".json.tmp").exists())
+        return receipt
+
+    def test_timing_success_reuse_and_forced_repeat_preserve_snapshot_identity(self):
+        first = self.timed_capture()
+        receipt = self.assert_receipt(first, "succeeded", ["succeeded"] * 5)
+        self.assertIsNone(receipt["error"])
+        self.assertEqual(receipt["game"], {"version": "1.2", "build": "unknown"})
+        self.assertEqual([(row["name"], row["outcome"]) for row in receipt["assemblies"]],
+                         [("Player.dll", "succeeded"), ("System.dll", "skipped")])
+        head = git(self.output, "rev-parse", "HEAD").stdout.strip()
+        tree = git(self.output, "rev-parse", "HEAD^{tree}").stdout.strip()
+        from snapshot import file_tree
+        files = file_tree(self.output)
+        self.assertEqual(receipt["output_commit"], head)
+        self.assertNotIn("game_catalog/timing.py", json.loads((self.output / "Catalog" / "generator.json").read_text())["tools"])
+        reuse = self.timed_capture()
+        reused = self.assert_receipt(reuse, "reused", ["succeeded", "skipped", "skipped", "skipped", "succeeded"])
+        self.assertEqual(reused["output_commit"], head)
+        self.assertEqual(reused["assemblies"], [])
+        repeat = self.timed_capture(force=True)
+        repeated = self.assert_receipt(repeat, "succeeded", ["succeeded"] * 5)
+        self.assertNotEqual(receipt["started_at"], repeated["started_at"])
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout.strip(), head)
+        self.assertEqual(git(self.output, "rev-parse", "HEAD^{tree}").stdout.strip(), tree)
+        self.assertEqual(file_tree(self.output), files)
+        self.assertEqual(git(self.output, "status", "--porcelain").stdout.strip(), "")
+        self.assertFalse(any("capture-timing" in path.read_text(encoding="utf-8") for path in self.output.rglob("*.json")))
+
+    def test_timing_failure_preserves_snapshot_and_records_cleanup(self):
+        with self.assertRaisesRegex(RuntimeError, "synthetic decoding failure"):
+            self.timed_capture(failure="synthetic decoding failure")
+        path = self.last_timing_receipt
+        receipt = self.assert_receipt(path, "failed", ["succeeded", "failed", "skipped", "skipped", "succeeded"])
+        self.assertEqual(receipt["error"], "synthetic decoding failure")
+        self.assertEqual(git(self.output, "rev-parse", "HEAD").stdout, self.head)
+
     def test_generation_failure_preserves_previous_snapshot(self):
         with self.assertRaisesRegex(RuntimeError, "generation failed"):
             with Snapshot(self.output) as snapshot:
@@ -831,4 +933,24 @@ class SnapshotTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main(argv=[sys.argv[0], *remaining], verbosity=2)
+    if options.without_unitypy:
+        names = ["ProcessTests"] + ["DataTests." + name for name in (
+            "test_capture_reuse_requires_content_build_tool_and_full_scope_match",
+            "test_application_version_selects_only_player_settings_with_input_evidence",
+            "test_reuse_stability_rejects_new_and_changed_installed_inputs",
+            "test_steam_playtime_does_not_change_build_identity",
+            "test_inventory_excludes_saves_and_runtime_mod_browser",
+            "test_tool_hash_ignores_git_line_ending_conversion")]
+        names += ["SnapshotTests." + name for name in unittest.defaultTestLoader.getTestCaseNames(SnapshotTests)
+                  if name not in {"test_timing_success_reuse_and_forced_repeat_preserve_snapshot_identity",
+                                  "test_timing_failure_preserves_snapshot_and_records_cleanup"}]
+        RUNS.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="catalog-tests-", dir=RUNS.parent) as folder:
+            previous = tempfile.tempdir
+            tempfile.tempdir = folder
+            try:
+                unittest.main(argv=[sys.argv[0], *remaining], defaultTest=names, verbosity=2)
+            finally:
+                tempfile.tempdir = previous
+    else:
+        unittest.main(argv=[sys.argv[0], *remaining], verbosity=2)

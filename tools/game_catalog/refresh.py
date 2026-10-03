@@ -9,8 +9,10 @@ import re
 import shutil
 import threading
 import sys
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from processes import run_process, GIT_SECONDS, PROBE_SECONDS, ASSEMBLY_SECONDS, CAPTURE_SECONDS
+from timing import Timing, short_error, supervise_capture, timing_options, cli_error
 
 FRAMEWORK = re.compile(r"^(System(?:\.|$)|Mono(?:\.|$)|mscorlib$|netstandard$|Microsoft\.|UnityEngine)")
 
@@ -27,6 +29,10 @@ def tool_digest(path):
     # Git may convert PowerShell sources to CRLF on checkout. This is not a
     # generator behavior change and must not create a different snapshot.
     return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def generator_tools(script_root):
+    return sorted(p for p in script_root.glob("*.py") if not p.name.startswith("test_") and p.name != "timing.py") + [script_root.parent / "Decompile-GameCode.ps1", script_root.parent / "Read-GameBundle.ps1", script_root / "requirements.txt"]
 
 
 def steam_identity(game):
@@ -82,7 +88,7 @@ def inventory(game, paths):
     return result, stamps
 
 
-def decompile(game, stage, names, workers):
+def decompile(game, stage, names, workers, timing=None):
     managed = game / "Human Host_Data" / "Managed"
     assemblies = sorted(managed.glob("*.dll"))
     selected = [p for p in assemblies if p.stem in names] if names else [p for p in assemblies if not FRAMEWORK.match(p.stem)]
@@ -92,8 +98,14 @@ def decompile(game, stage, names, workers):
                  "reason": "selected" if p in selected else ("explicit assembly subset" if names else "runtime/framework module; API use remains in game source")}
                 for p in assemblies]
     cancel = threading.Event()
+    if timing:
+        timing.update(assemblies=[{"name": p.name, "seconds": 0.0, "outcome": "skipped"} for p in assemblies])
 
     def run(path):
+        with timing.measure(path.name, "assemblies") if timing else nullcontext():
+            return run_assembly(path)
+
+    def run_assembly(path):
         out = stage / path.stem
         out.mkdir()
         # Project mode extracts resources. Source-only mode emits C# and keeps payloads out.
@@ -164,8 +176,40 @@ def reusable_capture(output, steam, inputs, generator):
     return True
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+@contextmanager
+def timed_snapshot(output, no_git, timing):
+    from snapshot import Snapshot
+    snapshot = Snapshot(output, no_git)
+    snapshot.__enter__()
+    try:
+        yield snapshot
+    finally:
+        exception = sys.exc_info()
+        with timing.measure("cleanup"):
+            snapshot.__exit__(*exception)
+
+
+def main(timing=None):
+    owned = timing is None
+    if owned:
+        options = timing_options()
+        timing = Timing(options.output)
+    error = None
+    try:
+        capture(timing)
+    except BaseException as exc:
+        error = exc
+        timing.update(outcome="failed", error=short_error(exc))
+        raise
+    finally:
+        if owned:
+            timing.finish(error)
+        else:
+            timing.drain()
+
+
+def capture(timing):
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--game", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--python-packages", type=Path)
@@ -175,9 +219,9 @@ def main():
     options = parser.parse_args()
     if options.python_packages:
         sys.path.insert(0, str(options.python_packages.resolve()))
-    from catalog import Catalog, dump, rows
-    from snapshot import Snapshot
     game, output = options.game.resolve(), options.output.resolve()
+    timing.update(output_path=str(output))
+    from catalog import Catalog, dump, rows
     workspace = Path(__file__).resolve().parents[2]
     if output == workspace or output.is_relative_to(game) or game.is_relative_to(output):
         raise ValueError("Output must be a separate generated snapshot directory outside the game")
@@ -197,50 +241,57 @@ def main():
     if options.workers < 1:
         raise ValueError("workers must be positive")
     decompiler = run_process(["ilspycmd", "--version"], timeout=PROBE_SECONDS).stdout.splitlines()[0]
-    with Snapshot(output, options.no_git) as snapshot:
+    with timed_snapshot(output, options.no_git, timing) as snapshot:
         stage = snapshot.stage
-        script_root = Path(__file__).resolve().parent
-        tool_files = sorted(p for p in script_root.glob("*.py") if not p.name.startswith("test_")) + [script_root.parent / "Decompile-GameCode.ps1", script_root.parent / "Read-GameBundle.ps1", script_root / "requirements.txt"]
-        tool_hashes = {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}
-        generator = {"schema": 1, "packages": versions, "python": sys.version.split()[0],
-                     "decompiler": decompiler, "tool_hash_normalization": "CRLF to LF", "tools": tool_hashes}
-        steam = steam_identity(game)
-        paths = input_paths(game)
-        inputs, stamps = inventory(game, paths)
-        build = steam["build_id"]
-        if not options.no_git and not options.assemblies and reusable_capture(output, steam, inputs, generator):
-            inputs_stable(game, paths, stamps, steam)
-            if tool_hashes != {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}:
-                raise RuntimeError("Generator source changed during input verification")
-            if snapshot.fingerprint() != snapshot.original_files:
-                raise RuntimeError("Source snapshot changed during input verification")
-            from snapshot import git
-            if git(output, "rev-parse", "HEAD").stdout.strip() != snapshot.state["head"] or git(output, "status", "--porcelain").stdout.strip():
-                raise RuntimeError("Source snapshot Git state changed during input verification")
-            print(f"Unchanged: verified installed hashes, Steam identity and generator; reusing {snapshot.state['head']}", flush=True)
-            return
-        dump(stage / "Catalog" / "steam-build.json", steam)
-        rows(stage / "Catalog" / "inputs.jsonl", inputs)
-        loose_text = []
-        for path in paths:
-            if path.name == "catalog.json" or path.suffix.lower() not in {".json", ".xml", ".txt", ".config", ".lua"} and path.name not in {"build_info", "Bundle_Info", "app.info"}:
-                continue
-            try:
-                text = path.read_text(encoding="utf-8-sig")
-            except UnicodeError:
-                continue
-            if "\x00" not in text:
-                loose_text.append({"source": os.path.relpath(path, game).replace("\\", "/"), "text": text})
-        rows(stage / "Catalog" / "loose-text.jsonl", loose_text)
-        catalog = Catalog(game, stage / "Catalog")
-        failures = catalog.export()
-        if failures:
-            raise RuntimeError(f"Catalog has {len(failures)} decoding failures; previous snapshot preserved.\n" + json.dumps(failures[:20], indent=2))
-        from game_version import capture
-        version = capture(catalog.records.values(), {key: info["source"] for key, info in catalog.files.items()}, inputs)
-        dump(stage / "Catalog" / "game-version.json", version)
-        print(f"[game version] {version['version'] or version['reason']}", flush=True)
-        assembly_manifest, resources = decompile(game, stage, options.assemblies, options.workers)
+        with timing.measure("input hashing/reuse check"):
+            script_root = Path(__file__).resolve().parent
+            tool_files = generator_tools(script_root)
+            tool_hashes = {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}
+            generator = {"schema": 1, "packages": versions, "python": sys.version.split()[0],
+                         "decompiler": decompiler, "tool_hash_normalization": "CRLF to LF", "tools": tool_hashes}
+            steam = steam_identity(game)
+            paths = input_paths(game)
+            inputs, stamps = inventory(game, paths)
+            build = steam["build_id"]
+            timing.update(game={"version": None, "build": build})
+            if not options.no_git and not options.assemblies and reusable_capture(output, steam, inputs, generator):
+                inputs_stable(game, paths, stamps, steam)
+                if tool_hashes != {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}:
+                    raise RuntimeError("Generator source changed during input verification")
+                if snapshot.fingerprint() != snapshot.original_files:
+                    raise RuntimeError("Source snapshot changed during input verification")
+                from snapshot import git
+                if git(output, "rev-parse", "HEAD").stdout.strip() != snapshot.state["head"] or git(output, "status", "--porcelain").stdout.strip():
+                    raise RuntimeError("Source snapshot Git state changed during input verification")
+                version = json.loads((output / "Catalog" / "game-version.json").read_text(encoding="utf-8"))
+                timing.update(outcome="reused", output_commit=snapshot.state["head"], game={"version": version["version"], "build": build})
+                print(f"Unchanged: verified installed hashes, Steam identity and generator; reusing {snapshot.state['head']}", flush=True)
+                return
+        with timing.measure("catalog decode"):
+            dump(stage / "Catalog" / "steam-build.json", steam)
+            rows(stage / "Catalog" / "inputs.jsonl", inputs)
+            loose_text = []
+            for path in paths:
+                if path.name == "catalog.json" or path.suffix.lower() not in {".json", ".xml", ".txt", ".config", ".lua"} and path.name not in {"build_info", "Bundle_Info", "app.info"}:
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8-sig")
+                except UnicodeError:
+                    continue
+                if "\x00" not in text:
+                    loose_text.append({"source": os.path.relpath(path, game).replace("\\", "/"), "text": text})
+            rows(stage / "Catalog" / "loose-text.jsonl", loose_text)
+            catalog = Catalog(game, stage / "Catalog")
+            failures = catalog.export()
+            if failures:
+                raise RuntimeError(f"Catalog has {len(failures)} decoding failures; previous snapshot preserved.\n" + json.dumps(failures[:20], indent=2))
+            from game_version import capture
+            version = capture(catalog.records.values(), {key: info["source"] for key, info in catalog.files.items()}, inputs)
+            dump(stage / "Catalog" / "game-version.json", version)
+            timing.update(game={"version": version["version"], "build": build})
+            print(f"[game version] {version['version'] or version['reason']}", flush=True)
+        with timing.measure("decompile"):
+            assembly_manifest, resources = decompile(game, stage, options.assemblies, options.workers, timing)
         rows(stage / "Catalog" / "assemblies.jsonl", assembly_manifest)
         rows(stage / "Catalog" / "embedded-resources.jsonl", resources)
         dump(stage / "Catalog" / "generator.json", generator)
@@ -261,15 +312,24 @@ def main():
         inputs_stable(game, paths, stamps, steam)
         if tool_hashes != {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}:
             raise RuntimeError("Generator source changed during generation; retry with stable tools")
-        snapshot.publish(f"Human Host build {build}: source and text catalog")
+        with timing.measure("Git promotion"):
+            snapshot.publish(f"Human Host build {build}: source and text catalog")
+            timing.update(output_commit=None if options.no_git else snapshot.state["prepared_commit"])
         print(f"Complete: {output}", flush=True)
+    timing.update(outcome="succeeded")
 
 
 if __name__ == "__main__":
     # Supervise even direct CLI use, including in-process decoder stalls.
     if os.environ.get("HUMANHOST_CAPTURE_CHILD") == "1":
-        main()
+        try:
+            main(Timing.resume(os.environ["HUMANHOST_CAPTURE_TIMING"]))
+        except Exception as exc:
+            cli_error(exc)
+        os._exit(0)
     else:
-        child_env = dict(os.environ, HUMANHOST_CAPTURE_CHILD="1")
-        run_process([sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
-                    timeout=CAPTURE_SECONDS, env=child_env, forward=True)
+        try:
+            supervise_capture([sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]], CAPTURE_SECONDS)
+        except Exception as exc:
+            cli_error(exc)
+        os._exit(0)
