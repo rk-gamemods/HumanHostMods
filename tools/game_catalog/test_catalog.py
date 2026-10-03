@@ -1,6 +1,7 @@
 """Run: py -3 tools/game_catalog/test_catalog.py --python-packages <isolated dependencies>"""
 import argparse
 import base64
+import hashlib
 import io
 import json
 import os
@@ -31,12 +32,71 @@ if not options.without_unitypy:
     from UnityPy.helpers.TypeTreeHelper import read_typetree
     from UnityPy.streams import EndianBinaryReader
 from snapshot import Snapshot, git
-from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable, decompile
+from refresh import steam_identity, input_paths, tool_digest, reusable_capture, inputs_stable, decompile, build_generator_inputs
 from processes import run_process
 from game_version import capture as capture_version
 from timing import Timing, PHASES, RUNS
 from test_timing import TimingTests
 import refresh
+
+
+class GeneratorInputTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="hhmods-generator-input-test-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.script_root = self.root / "game_catalog"
+        self.script_root.mkdir()
+        self.names = ["game_catalog/a.py", "game_catalog/z.py", "Decompile-GameCode.ps1",
+                      "Read-GameBundle.ps1", "game_catalog/requirements.txt"]
+        for name in reversed(self.names + ["game_catalog/test_ignored.py", "game_catalog/timing.py"]):
+            (self.root / name).write_bytes(b"one\ntwo\n")
+        self.versions = {"UnityPy": "1.25.3", "TypeTreeGeneratorAPI": "0.0.10"}
+        self.decompiler = "fixture decompiler"
+
+    def test_generator_inputs_normalize_crlf(self):
+        original, paths = build_generator_inputs(self.script_root, self.versions, self.decompiler)
+        self.assertEqual(original["tools"], {name: hashlib.sha256(b"one\ntwo\n").hexdigest()
+                                             for name in self.names})
+        for path in paths:
+            path.write_bytes(b"one\r\ntwo\r\n")
+        self.assertEqual(build_generator_inputs(self.script_root, self.versions, self.decompiler),
+                         (original, paths))
+
+    def test_generator_inputs_keep_stable_tool_order(self):
+        files = list(self.script_root.glob("*.py"))
+        with patch("refresh.Path.glob", side_effect=[iter(files), iter(reversed(files))]):
+            first = build_generator_inputs(self.script_root, self.versions, self.decompiler)
+            second = build_generator_inputs(self.script_root, self.versions, self.decompiler)
+        self.assertEqual(first, second)
+        generator, paths = first
+        self.assertEqual(list(generator["tools"]), self.names)
+        self.assertEqual([path.relative_to(self.root).as_posix() for path in paths], self.names)
+
+    def test_existing_snapshot_reuses_legacy_generator_inputs(self):
+        # Construct an existing synthetic snapshot with the pre-extraction formula.
+        paths = sorted(p for p in self.script_root.glob("*.py")
+                       if not p.name.startswith("test_") and p.name != "timing.py")
+        paths += [self.root / "Decompile-GameCode.ps1", self.root / "Read-GameBundle.ps1",
+                  self.script_root / "requirements.txt"]
+        hashes = {p.relative_to(self.root).as_posix():
+                  hashlib.sha256(p.read_bytes().replace(b"\r\n", b"\n")).hexdigest() for p in paths}
+        legacy = {"schema": 1, "packages": self.versions, "python": sys.version.split()[0],
+                  "decompiler": self.decompiler, "tool_hash_normalization": "CRLF to LF", "tools": hashes}
+        output = self.root / "snapshot"
+        catalog = output / "Catalog"
+        catalog.mkdir(parents=True)
+        steam, inputs = {"build_id": "fixture"}, [{"path": "fixture.dll", "sha256": "a"}]
+        for name, data in [("generator.json", legacy), ("steam-build.json", steam),
+                           ("coverage.json", {"decode_failures": []}),
+                           ("game-version.json", {"version": "fixture"})]:
+            (catalog / name).write_text(json.dumps(data), encoding="utf-8")
+        (catalog / "inputs.jsonl").write_text(json.dumps(inputs[0]) + "\n", encoding="utf-8")
+        (catalog / "assemblies.jsonl").write_text('{"reason": "selected"}\n', encoding="utf-8")
+        generator, tool_files = build_generator_inputs(self.script_root, self.versions, self.decompiler)
+        self.assertEqual(json.dumps(generator), json.dumps(legacy))
+        self.assertEqual(tool_files, paths)
+        self.assertTrue(reusable_capture(output, steam, inputs, generator))
 
 
 class ProcessTests(unittest.TestCase):
@@ -934,7 +994,7 @@ class SnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     if options.without_unitypy:
-        names = ["ProcessTests"] + ["DataTests." + name for name in (
+        names = ["GeneratorInputTests", "ProcessTests"] + ["DataTests." + name for name in (
             "test_capture_reuse_requires_content_build_tool_and_full_scope_match",
             "test_application_version_selects_only_player_settings_with_input_evidence",
             "test_reuse_stability_rejects_new_and_changed_installed_inputs",

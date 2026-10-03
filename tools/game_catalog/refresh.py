@@ -35,6 +35,15 @@ def generator_tools(script_root):
     return sorted(p for p in script_root.glob("*.py") if not p.name.startswith("test_") and p.name != "timing.py") + [script_root.parent / "Decompile-GameCode.ps1", script_root.parent / "Read-GameBundle.ps1", script_root / "requirements.txt"]
 
 
+def build_generator_inputs(script_root, versions, decompiler):
+    """Build normalized generator provenance and retain tool paths for stability checks."""
+    tool_files = generator_tools(script_root)
+    tool_hashes = {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}
+    generator = {"schema": 1, "packages": versions, "python": sys.version.split()[0],
+                 "decompiler": decompiler, "tool_hash_normalization": "CRLF to LF", "tools": tool_hashes}
+    return generator, tool_files
+
+
 def steam_identity(game):
     manifest = game.parent.parent / "appmanifest_2393970.acf"
     if not manifest.exists():
@@ -245,10 +254,8 @@ def capture(timing):
         stage = snapshot.stage
         with timing.measure("input hashing/reuse check"):
             script_root = Path(__file__).resolve().parent
-            tool_files = generator_tools(script_root)
-            tool_hashes = {p.relative_to(script_root.parent).as_posix(): tool_digest(p) for p in tool_files}
-            generator = {"schema": 1, "packages": versions, "python": sys.version.split()[0],
-                         "decompiler": decompiler, "tool_hash_normalization": "CRLF to LF", "tools": tool_hashes}
+            generator, tool_files = build_generator_inputs(script_root, versions, decompiler)
+            tool_hashes = generator["tools"]
             steam = steam_identity(game)
             paths = input_paths(game)
             inputs, stamps = inventory(game, paths)
