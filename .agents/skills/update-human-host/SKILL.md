@@ -30,4 +30,6 @@ Use existing capture receipts and `wiki.py timing` to identify expensive phases 
 
 For source or documentation discovery, refresh the appropriate Munch index against current files with an explicit set of relevant tracked owner paths. Exclude generated receipts, readers, raw catalogs, nested repositories and `bin`/`obj` outputs from code-index traversal. Keep documentation embeddings disabled unless requested. This avoids walking large generated trees before a small source review.
 
+Reuse one verified preview process per immutable release. Restart it when the selected release or preview-server code changes; do not replace startup byte verification with a housekeeping receipt.
+
 Finish with the capture version/build and commits, selected release and publication result, exception dispositions, tests and visual evidence, mod-review/PR status, timing findings, clean-state status and verified memory ID. Link the [process diagrams](../../../docs/diagrams/human-host-update/README.md); update their repository evidence when the documented flow changes.
