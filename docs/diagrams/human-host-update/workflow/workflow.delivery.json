@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "bb7877b6-726d-4111-9ede-349b02a4d10e",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "C:\\Users\\Admin\\Documents\\GIT\\GameMods\\HumanHostMods\\docs\\diagrams\\human-host-update\\workflow\\candidate.json",
+  "output": "C:\\Users\\Admin\\Documents\\GIT\\GameMods\\HumanHostMods\\docs\\diagrams\\human-host-update\\workflow\\workflow.html",
+  "specification": {
+    "sha256": "f9dc3676a93dc56fcc37aa17baacc7f094a6b2d07b69157f47e621c62486295c",
+    "bytes": 6974
+  },
+  "artifact": {
+    "sha256": "5b16f0629e6f14c92aeb83de53d3cdf615828c68f97e8329dc47f977636a4ce4",
+    "bytes": 768127
+  }
+}

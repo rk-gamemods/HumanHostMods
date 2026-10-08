@@ -1,5 +1,7 @@
 # Runbook: game update to published wiki
 
+Invoke `$update-human-host` in this workspace to coordinate this cycle, including the parallel Expanded Hordes review. The [process diagrams](diagrams/human-host-update/README.md) show the workflow and source lineage. This runbook owns the commands and recovery rules.
+
 ## Rules
 
 - The normal update stops at a local release and retention.
@@ -177,7 +179,7 @@ first failed check, in this order:
 2. `origin` identifies `github.com/rk-gamemods/HumanHostWiki` through accepted HTTPS or SSH syntax.
 3. A bounded main fetch succeeds and HEAD equals fetched origin/main.
 4. The newest matching `CI` run/attempt for that exact commit is completed and successful, from a main push of `.github/workflows/ci.yml`. Missing or malformed evidence fails.
-5. A merged PR has a nonempty `merged_at` and this exact `merge_commit_sha`. A direct push is insufficient.
+5. A merged PR has GraphQL `mergeCommit.oid` equal to this exact commit. A direct push is insufficient.
 6. The hash-checked rehearsal receipt exists, uses the supported schema, and matches the release, workspace commit and publication contract, including the rehearsal runner. Its UTC timestamp is at most 24 hours old and not in the future.
 7. Receipt refs have valid unique repository/branch identities and valid SHAs or null. They cover main and gh-pages for every current destination. Every recorded live ref still matches.
 8. Destination observations are valid, unique and complete. Live identity, visibility, administrator permission and Pages settings still match, including absent or disabled destinations. Existing repositories must be public, unarchived and not forks; Pages must use gh-pages at `/`, legacy branch publishing, no CNAME and the expected URL.

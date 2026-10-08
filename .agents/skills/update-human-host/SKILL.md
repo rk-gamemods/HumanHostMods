@@ -28,4 +28,6 @@ Apply only evidenced necessary changes. Follow that repository's build, tests an
 
 Use existing capture receipts and `wiki.py timing` to identify expensive phases before proposing an optimization. Preserve content-addressed reuse, immutable outputs, writer exclusion and publication gates. Change only a demonstrated defect or a measured bottleneck; keep unrelated prose and configuration intact. Reuse the existing runbook and deterministic commands instead of adding a competing all-in-one script.
 
+For source or documentation discovery, refresh the appropriate Munch index against current files with an explicit set of relevant tracked owner paths. Exclude generated receipts, readers, raw catalogs, nested repositories and `bin`/`obj` outputs from code-index traversal. Keep documentation embeddings disabled unless requested. This avoids walking large generated trees before a small source review.
+
 Finish with the capture version/build and commits, selected release and publication result, exception dispositions, tests and visual evidence, mod-review/PR status, timing findings, clean-state status and verified memory ID. Link the [process diagrams](../../../docs/diagrams/human-host-update/README.md); update their repository evidence when the documented flow changes.

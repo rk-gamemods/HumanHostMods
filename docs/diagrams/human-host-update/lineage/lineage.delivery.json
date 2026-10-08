@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "5e9cd61f-d8d4-4849-afb7-9c4fcbc9360a",
+  "status": "current",
+  "command": "deliver",
+  "type": "dataflow",
+  "input": "C:\\Users\\Admin\\Documents\\GIT\\GameMods\\HumanHostMods\\docs\\diagrams\\human-host-update\\lineage\\candidate.json",
+  "output": "C:\\Users\\Admin\\Documents\\GIT\\GameMods\\HumanHostMods\\docs\\diagrams\\human-host-update\\lineage\\lineage.html",
+  "specification": {
+    "sha256": "fdb10f9e8e10d573e57efab5a007944c933c1017ccc902006f7f89686006d18e",
+    "bytes": 6852
+  },
+  "artifact": {
+    "sha256": "0a5b9ef8dca08332e4e78fea9e3226fd82aa007b6dfd87052b843bb51d86e5a6",
+    "bytes": 765176
+  }
+}
