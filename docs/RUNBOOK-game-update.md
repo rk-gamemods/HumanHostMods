@@ -15,6 +15,8 @@ Read its [instructions](../HumanHostWiki/AGENTS.md) and [workflow](../HumanHostW
 Use PowerShell 7 and the dependencies in [capture setup](GAME_CODEBASE.md#setup-and-refresh).
 Resolve existing work in each owning repository. Do not bypass dirty-state checks or discard unknown files.
 
+Finish changes and relevant tests for contract-owning capture/wiki code, configuration and definitions before starting capture or wiki generation. Keep those inputs unchanged while its writer runs. Wait for command exit before editing those inputs or accepting the new outputs as final.
+
 ## 1. Detect the update
 
 Wait for Steam to finish installing the update. From HumanHostMods, run:
@@ -134,8 +136,15 @@ failures, unavailable providers and retention issues separate. Decide whether
 the explicit gaps are acceptable for publication; successful stages alone do not
 prove gameplay verification. If corrections are needed, make, review and commit
 them in their owning repositories. Identity corrections and extraction rules
-belong in the umbrella; curated content belongs in its child repository. When
-reviewed child commits change, adopt them with `py -3 wiki.py lock` before the
+belong in the umbrella; curated content belongs in its child repository.
+
+When changing the reader, check the existing preview before final generation.
+Inspect the hub and topic landing pages, then expand source details at a
+390-pixel viewport and verify that long keys and hashes wrap without horizontal
+overflow. Batch fixes and relevant tests before starting the update; inspect
+the generated release after it exits.
+
+When reviewed child commits change, adopt them with `py -3 wiki.py lock` before the
 update, or update rejects the stale checkout lock. Then rerun the update and
 select the resulting release. See [curated changes](../HumanHostWiki/docs/CURATED.md).
 Review and merge umbrella changes, use main at fetched origin/main, and wait for
