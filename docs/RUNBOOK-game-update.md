@@ -211,7 +211,7 @@ From HumanHostWiki, inspect the completed receipt:
 
 ```powershell
 Get-Content publications/latest.json
-$published = Get-Content "publications/$releaseId.json" -Raw | ConvertFrom-Json
+$published = (Get-Content "publications/$releaseId.json" -Raw | ConvertFrom-Json).payload
 $published.repositories.PSObject.Properties | ForEach-Object { $_.Value | Select-Object name, base, main, pages, verified }
 ```
 
