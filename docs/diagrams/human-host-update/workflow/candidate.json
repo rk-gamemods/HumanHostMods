@@ -7,61 +7,393 @@
     "quality_profile": "showcase",
     "legend": {
       "entries": {
-        "frontend": { "label": "Wiki reader" },
-        "backend": { "label": "Processing" },
-        "security": { "label": "Review and gates" },
-        "database": { "label": "Local evidence" },
-        "cloud": { "label": "Publication" },
-        "external": { "label": "Installed game" }
+        "frontend": {
+          "label": "Wiki reader"
+        },
+        "backend": {
+          "label": "Processing"
+        },
+        "security": {
+          "label": "Review and gates"
+        },
+        "database": {
+          "label": "Local evidence"
+        },
+        "cloud": {
+          "label": "Publication"
+        },
+        "external": {
+          "label": "Installed game"
+        }
       }
     },
     "output": "docs/diagrams/human-host-update/workflow/workflow.html",
     "repository": {
       "url": "https://github.com/rk-gamemods/HumanHostMods.git",
-      "revision": "0f2a8bbb4f0c31ea988f4f2e649917c6ef5713ca",
+      "revision": "531ee4efb2dea068c3da09881b8af95502f9af18",
       "link_mode": "local-only"
     }
   },
   "lanes": [
-    { "id": "capture_lane", "label": "Installed game and local capture" },
-    { "id": "mod_lane", "label": "Parallel Expanded Hordes review" },
-    { "id": "wiki_lane", "label": "Wiki reconciliation and release review" },
-    { "id": "publish_lane", "label": "Gated wiki publication" },
-    { "id": "verification_lane", "label": "Public result and final checks" }
+    {
+      "id": "capture_lane",
+      "label": "Installed game and local capture"
+    },
+    {
+      "id": "mod_lane",
+      "label": "Parallel Expanded Hordes review"
+    },
+    {
+      "id": "wiki_lane",
+      "label": "Wiki reconciliation and release review"
+    },
+    {
+      "id": "publish_lane",
+      "label": "Gated wiki publication"
+    },
+    {
+      "id": "verification_lane",
+      "label": "Public result and final checks"
+    }
   ],
-  "mainPath": ["clean", "detect", "capture", "local_update", "exceptions", "validation", "preflight", "publish", "sites"],
+  "mainPath": [
+    "clean",
+    "detect",
+    "capture",
+    "local_update",
+    "exceptions",
+    "validation",
+    "preflight",
+    "publish",
+    "sites"
+  ],
   "nodes": [
-    { "id": "clean", "lane": "capture_lane", "col": 0, "type": "security", "label": "Clean repositories", "sublabel": "Resolve existing work", "width": 132, "sources": [{ "path": ".agents/skills/update-human-host/SKILL.md", "line": 14 }] },
-    { "id": "detect", "lane": "capture_lane", "col": 1, "type": "external", "label": "Detect update", "sublabel": "Stable Steam inputs", "width": 132, "sources": [{ "path": "docs/RUNBOOK-game-update.md", "line": 16, "end_line": 36 }] },
-    { "id": "capture", "lane": "capture_lane", "col": 2, "type": "backend", "label": "Full capture", "sublabel": "Code + catalogs + receipt", "width": 132, "sources": [{ "path": "docs/RUNBOOK-game-update.md", "line": 38, "end_line": 70 }] },
-    { "id": "diff", "lane": "capture_lane", "col": 3, "type": "database", "label": "Capture + diff", "sublabel": "Pin before/after commits", "width": 132, "sources": [{ "path": ".agents/skills/update-human-host/SKILL.md", "line": 15, "end_line": 16 }] },
-    { "id": "mod_review", "lane": "mod_lane", "col": 3, "type": "backend", "label": "Audit changed code", "sublabel": "Targets, callers, config", "width": 132, "sources": [{ "path": ".agents/skills/update-human-host/SKILL.md", "line": 21, "end_line": 25 }] },
-    { "id": "mod_changes", "lane": "mod_lane", "col": 4, "type": "backend", "label": "Necessary patches", "sublabel": "Build, test and validate", "width": 132, "sources": [{ "path": ".agents/skills/update-human-host/SKILL.md", "line": 25 }] },
-    { "id": "mod_review_gate", "lane": "mod_lane", "col": 5, "type": "security", "label": "Develop PR review", "sublabel": "Merge after user review", "width": 132, "sources": [{ "path": ".agents/skills/update-human-host/SKILL.md", "line": 25 }] },
-    { "id": "local_update", "lane": "wiki_lane", "col": 2, "type": "backend", "label": "Wiki handoff", "sublabel": "Local release + retention", "width": 132, "sources": [{ "path": "docs/RUNBOOK-game-update.md", "line": 51, "end_line": 56 }, { "path": "docs/RUNBOOK-game-update.md", "line": 74, "end_line": 92 }] },
-    { "id": "exceptions", "lane": "wiki_lane", "col": 3, "type": "backend", "label": "Fix source issues", "sublabel": "Repair owning rules", "width": 132, "sources": [{ "path": ".agents/skills/update-human-host/SKILL.md", "line": 17 }, { "path": "docs/RUNBOOK-game-update.md", "line": 128, "end_line": 138 }] },
-    { "id": "validation", "lane": "wiki_lane", "col": 4, "type": "security", "label": "Tests + UI review", "sublabel": "Facts, links and history", "width": 132, "sources": [{ "path": ".agents/skills/update-human-host/SKILL.md", "line": 18 }, { "path": "docs/RUNBOOK-game-update.md", "line": 107, "end_line": 127 }] },
-    { "id": "preflight", "lane": "publish_lane", "col": 4, "type": "security", "label": "Publish preflight", "sublabel": "Main, CI and rehearsal", "width": 132, "sources": [{ "path": "docs/RUNBOOK-game-update.md", "line": 139, "end_line": 162 }] },
-    { "id": "publish", "lane": "publish_lane", "col": 5, "type": "cloud", "label": "Publish release", "sublabel": "Every production gate", "width": 132, "sources": [{ "path": "docs/RUNBOOK-game-update.md", "line": 164, "end_line": 195 }] },
-    { "id": "sites", "lane": "verification_lane", "col": 5, "type": "frontend", "label": "Check live sites", "sublabel": "Release and public bytes", "width": 132, "sources": [{ "path": "docs/RUNBOOK-game-update.md", "line": 197, "end_line": 219 }] }
+    {
+      "id": "clean",
+      "lane": "capture_lane",
+      "col": 0,
+      "type": "security",
+      "label": "Clean repositories",
+      "sublabel": "Resolve existing work",
+      "width": 132,
+      "sources": [
+        {
+          "path": ".agents/skills/update-human-host/SKILL.md",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "id": "detect",
+      "lane": "capture_lane",
+      "col": 1,
+      "type": "external",
+      "label": "Detect update",
+      "sublabel": "Stable Steam inputs",
+      "width": 132,
+      "sources": [
+        {
+          "path": "docs/RUNBOOK-game-update.md",
+          "line": 20,
+          "end_line": 40
+        }
+      ]
+    },
+    {
+      "id": "capture",
+      "lane": "capture_lane",
+      "col": 2,
+      "type": "backend",
+      "label": "Full capture",
+      "sublabel": "Code + catalogs + receipt",
+      "width": 132,
+      "sources": [
+        {
+          "path": "docs/RUNBOOK-game-update.md",
+          "line": 42,
+          "end_line": 74
+        }
+      ]
+    },
+    {
+      "id": "diff",
+      "lane": "capture_lane",
+      "col": 3,
+      "type": "database",
+      "label": "Capture + diff",
+      "sublabel": "Pin before/after commits",
+      "width": 132,
+      "sources": [
+        {
+          "path": ".agents/skills/update-human-host/SKILL.md",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "id": "mod_review",
+      "lane": "mod_lane",
+      "col": 3,
+      "type": "backend",
+      "label": "Audit changed code",
+      "sublabel": "Targets, callers, config",
+      "width": 132,
+      "sources": [
+        {
+          "path": ".agents/skills/update-human-host/SKILL.md",
+          "line": 22,
+          "end_line": 26
+        }
+      ]
+    },
+    {
+      "id": "mod_changes",
+      "lane": "mod_lane",
+      "col": 4,
+      "type": "backend",
+      "label": "Necessary patches",
+      "sublabel": "Build, test and validate",
+      "width": 132,
+      "sources": [
+        {
+          "path": ".agents/skills/update-human-host/SKILL.md",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "id": "mod_review_gate",
+      "lane": "mod_lane",
+      "col": 5,
+      "type": "security",
+      "label": "Develop PR review",
+      "sublabel": "Merge after user review",
+      "width": 132,
+      "sources": [
+        {
+          "path": ".agents/skills/update-human-host/SKILL.md",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "id": "local_update",
+      "lane": "wiki_lane",
+      "col": 2,
+      "type": "backend",
+      "label": "Fast input precheck",
+      "sublabel": "Source + identity",
+      "width": 132,
+      "sources": [
+        {
+          "path": "docs/RUNBOOK-game-update.md",
+          "line": 94,
+          "end_line": 111
+        }
+      ]
+    },
+    {
+      "id": "exceptions",
+      "lane": "wiki_lane",
+      "col": 3,
+      "type": "backend",
+      "label": "Repair + recheck",
+      "sublabel": "Then build local release",
+      "width": 132,
+      "sources": [
+        {
+          "path": ".agents/skills/update-human-host/SKILL.md",
+          "line": 17,
+          "end_line": 18
+        },
+        {
+          "path": "docs/RUNBOOK-game-update.md",
+          "line": 94,
+          "end_line": 111
+        }
+      ]
+    },
+    {
+      "id": "validation",
+      "lane": "wiki_lane",
+      "col": 4,
+      "type": "security",
+      "label": "Tests + UI review",
+      "sublabel": "Facts, links and history",
+      "width": 132,
+      "sources": [
+        {
+          "path": ".agents/skills/update-human-host/SKILL.md",
+          "line": 19
+        },
+        {
+          "path": "docs/RUNBOOK-game-update.md",
+          "line": 129,
+          "end_line": 171
+        }
+      ]
+    },
+    {
+      "id": "preflight",
+      "lane": "publish_lane",
+      "col": 4,
+      "type": "security",
+      "label": "Publish preflight",
+      "sublabel": "Main, CI and rehearsal",
+      "width": 132,
+      "sources": [
+        {
+          "path": "docs/RUNBOOK-game-update.md",
+          "line": 173,
+          "end_line": 191
+        }
+      ]
+    },
+    {
+      "id": "publish",
+      "lane": "publish_lane",
+      "col": 5,
+      "type": "cloud",
+      "label": "Publish release",
+      "sublabel": "Every production gate",
+      "width": 132,
+      "sources": [
+        {
+          "path": "docs/RUNBOOK-game-update.md",
+          "line": 193,
+          "end_line": 224
+        }
+      ]
+    },
+    {
+      "id": "sites",
+      "lane": "verification_lane",
+      "col": 5,
+      "type": "frontend",
+      "label": "Check live sites",
+      "sublabel": "Release and public bytes",
+      "width": 132,
+      "sources": [
+        {
+          "path": "docs/RUNBOOK-game-update.md",
+          "line": 226,
+          "end_line": 248
+        }
+      ]
+    }
   ],
   "edges": [
-    { "id": "clean-detect", "from": "clean", "to": "detect", "role": "main" },
-    { "id": "detect-capture", "from": "detect", "to": "capture", "role": "main" },
-    { "id": "capture-diff", "from": "capture", "to": "diff", "label": "capture succeeds", "role": "branch", "variant": "dashed" },
-    { "id": "capture-wiki", "from": "capture", "to": "local_update", "label": "same wrapper", "role": "main", "variant": "emphasis" },
-    { "id": "diff-mod", "from": "diff", "to": "mod_review", "label": "read-only source", "role": "branch", "variant": "dashed" },
-    { "id": "mod-impact", "from": "mod_review", "to": "mod_changes", "label": "evidenced impact", "role": "branch" },
-    { "id": "mod-pr", "from": "mod_changes", "to": "mod_review_gate", "label": "changes needed", "role": "branch", "variant": "security" },
-    { "id": "wiki-exceptions", "from": "local_update", "to": "exceptions", "role": "main" },
-    { "id": "exceptions-validation", "from": "exceptions", "to": "validation", "role": "main" },
-    { "id": "validation-preflight", "from": "validation", "to": "preflight", "role": "main", "variant": "security" },
-    { "id": "preflight-publish", "from": "preflight", "to": "publish", "label": "live state matches", "role": "main", "variant": "security" },
-    { "id": "publish-sites", "from": "publish", "to": "sites", "role": "main", "variant": "emphasis" }
+    {
+      "id": "clean-detect",
+      "from": "clean",
+      "to": "detect",
+      "role": "main"
+    },
+    {
+      "id": "detect-capture",
+      "from": "detect",
+      "to": "capture",
+      "role": "main"
+    },
+    {
+      "id": "capture-diff",
+      "from": "capture",
+      "to": "diff",
+      "label": "capture succeeds",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "capture-wiki",
+      "from": "capture",
+      "to": "local_update",
+      "label": "same wrapper",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "diff-mod",
+      "from": "diff",
+      "to": "mod_review",
+      "label": "read-only source",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "mod-impact",
+      "from": "mod_review",
+      "to": "mod_changes",
+      "label": "evidenced impact",
+      "role": "branch"
+    },
+    {
+      "id": "mod-pr",
+      "from": "mod_changes",
+      "to": "mod_review_gate",
+      "label": "changes needed",
+      "role": "branch",
+      "variant": "security"
+    },
+    {
+      "id": "wiki-exceptions",
+      "from": "local_update",
+      "to": "exceptions",
+      "role": "main",
+      "label": "review if needed"
+    },
+    {
+      "id": "exceptions-validation",
+      "from": "exceptions",
+      "to": "validation",
+      "role": "main"
+    },
+    {
+      "id": "validation-preflight",
+      "from": "validation",
+      "to": "preflight",
+      "role": "main",
+      "variant": "security"
+    },
+    {
+      "id": "preflight-publish",
+      "from": "preflight",
+      "to": "publish",
+      "label": "live state matches",
+      "role": "main",
+      "variant": "security"
+    },
+    {
+      "id": "publish-sites",
+      "from": "publish",
+      "to": "sites",
+      "role": "main",
+      "variant": "emphasis"
+    }
   ],
   "cards": [
-    { "dot": "cyan", "title": "Manual entrypoint", "items": ["Invoke $update-human-host in this workspace. The runbook owns commands and recovery.", "Successful capture already runs the local wiki update; unchanged inputs still receive that handoff."] },
-    { "dot": "rose", "title": "Source and review boundaries", "items": ["Resolve extraction and identity defects with evidence; preserve legitimate historical absence and uncertainty.", "Expanded Hordes uses its separate public repository. A necessary develop PR waits for user review."] },
-    { "dot": "emerald", "title": "Publication and recovery", "items": ["The local update never publishes sites. Reviewed main, exact-commit CI and fresh rehearsal precede publication.", "Capture failures preserve the previous snapshot. Failed publication attempts are abandoned before fresh rehearsal."] }
+    {
+      "dot": "cyan",
+      "title": "Manual entrypoint",
+      "items": [
+        "Invoke $update-human-host in this workspace. The runbook owns commands and recovery.",
+        "Capture hands off to the wiki precheck. Unknown source or identity inputs stop before costly reader and release work."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Source and review boundaries",
+      "items": [
+        "Repair the owning rules, then repeat wiki.py precheck. Clean results feed the normal update through existing caches.",
+        "Expanded Hordes uses its separate public repository. A necessary develop PR waits for user review."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Publication and recovery",
+      "items": [
+        "The local update never publishes sites. Reviewed main, exact-commit CI and fresh rehearsal precede publication.",
+        "Capture failures preserve the previous snapshot. Failed publication attempts are abandoned before fresh rehearsal."
+      ]
+    }
   ]
 }

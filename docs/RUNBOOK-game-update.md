@@ -292,3 +292,14 @@ Unknown or protected files require ownership review, not blanket deletion. See
 [retention](../HumanHostWiki/docs/RETENTION.md) and
 [workflow recovery](../HumanHostWiki/docs/WORKFLOW.md#failure-and-recovery).
 These final read-only checks create no timing receipt.
+
+Refresh the Munch indexes using explicit tracked owner paths, as prescribed by
+the skill. Keep documentation embeddings disabled and exclude generated readers,
+receipts, nested repositories and build outputs from workspace traversal.
+Code-index file coverage does not prove that every decompiled symbol parsed.
+ILSpy compiler-local names can hide later declarations from symbol search; use
+the same index's text search and original captured file when that happens.
+For 0.8.323, `Top_Info` is available through indexed text at
+`Build_System/Build_System.decompiled.cs:5775` despite the symbol-parser gap.
+Keep the captured source unchanged; the wiki's restricted metadata-parser
+normalization is separate from the code-index service.

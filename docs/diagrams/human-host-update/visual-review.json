@@ -1,29 +1,40 @@
 {
-  "reviewed_at_utc": "2026-10-08T03:22:52Z",
-  "reviewer": "Codex update_entrypoint agent",
+  "reviewed_at_utc": "2026-10-16T15:55:11.784800+00:00",
+  "reviewer": "Codex",
   "evidence_kind": "perceptual-review",
-  "scope": "Light and dark endpoint captures, route and label readability, legend fit, node focus/source passport and closure",
+  "scope": "All four fresh light/dark endpoint captures per artifact: labels, routes, legend fit and clipping. The retained three-bend receipt route is clear.",
   "artifacts": [
     {
       "path": "workflow/workflow.html",
-      "artifact_sha256": "5b16f0629e6f14c92aeb83de53d3cdf615828c68f97e8329dc47f977636a4ce4",
-      "specification_sha256": "f9dc3676a93dc56fcc37aa17baacc7f094a6b2d07b69157f47e621c62486295c",
+      "artifact_sha256": "05b7dca3e0e5c1e2638ee70d88be0f3c74e8510a17c1fc835dd7119aca2d318d",
+      "specification_sha256": "85f9ff1fa34a02adce764c22dab0f242ac8038f270f02eeed30c349a41dce05f",
       "browser_evidence": "passed",
       "visual_review": "passed",
-      "correction_rounds": 1,
-      "capture_receipt": "workflow/review-2/workflow.visual-check.json"
+      "correction_rounds": 0,
+      "capture_receipt": "workflow/review-3/workflow.visual-check.json"
     },
     {
       "path": "lineage/lineage.html",
-      "artifact_sha256": "0a5b9ef8dca08332e4e78fea9e3226fd82aa007b6dfd87052b843bb51d86e5a6",
-      "specification_sha256": "fdb10f9e8e10d573e57efab5a007944c933c1017ccc902006f7f89686006d18e",
+      "artifact_sha256": "8bb07fb8cd02f342a92c0c5165c5da86611d11ed9ecc655a041dc327a50e5ab1",
+      "specification_sha256": "84e71be54f52bde8b8ea09b80a952f3abd2dc18fcd375a4a2ab75072bbdacc20",
       "browser_evidence": "passed",
       "visual_review": "passed",
-      "correction_rounds": 2,
-      "capture_receipt": "lineage/review-3/lineage.visual-check.json",
-      "route_note": "Input receipt to extraction uses a clear three-bend route; endpoint captures showed no label or node overlap."
+      "correction_rounds": 1,
+      "capture_receipt": "lineage/review-5/lineage.visual-check.json"
     }
   ],
-  "capture_viewports": [[1440, 900], [2048, 1320]],
-  "capture_themes": ["light", "dark"]
+  "capture_viewports": [
+    [
+      1440,
+      900
+    ],
+    [
+      2048,
+      1320
+    ]
+  ],
+  "capture_themes": [
+    "light",
+    "dark"
+  ]
 }
