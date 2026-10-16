@@ -89,6 +89,24 @@ Only if the wrapper's wiki handoff failed, rerun the same update against the exi
 py -3 wiki.py update --operator-report
 ```
 
+An input-review stop is different from an execution failure. The wiki now runs
+register, extraction and identity checks before network, reader, release and
+retention work. Unknown source contracts stop even before identity processing.
+Exit 3 and `input-review-required` name a grouped immutable report under
+`.local/pipeline/prechecks/`; the selected release stays unchanged.
+
+Review those changes against the pinned source and repair their owning rules.
+Then use the fast prefix alone until it reports `inputs-ready`:
+
+```powershell
+py -3 wiki.py precheck --operator-report
+```
+
+Precheck reuses the existing extraction and identity caches. It creates no reader
+or release and does not check authored articles or live links. Once clean, rerun
+the normal `update`; its expensive stages reuse the accepted precheck artifacts.
+Do not bypass unknown fields or identity gaps to force release generation.
+
 If capture used a nondefault source, preserve its `--source <path>` on the retry.
 Success prints the grouped report, `release_id` and `next_step`. It finishes the
 local release, release retention and reader retention. It does not publish sites.

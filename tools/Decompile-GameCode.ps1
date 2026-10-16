@@ -71,4 +71,7 @@ if ($timingSupported -and $captureTiming) {
     $wikiArguments += @('--capture-timing', $captureTiming)
 }
 & py -3 (Join-Path $PSScriptRoot 'game_catalog\processes.py') 15000 py @wikiArguments
+if ($LASTEXITCODE -eq 3) {
+    throw 'Capture completed; wiki input precheck requires source review. Reader and release generation were skipped. Review the grouped report above, repair the owning rules, then rerun wiki.py precheck --operator-report before wiki.py update --operator-report.'
+}
 if ($LASTEXITCODE -ne 0) { throw "Capture completed; wiki update failed (exit $LASTEXITCODE). See the execution-failure report above." }
