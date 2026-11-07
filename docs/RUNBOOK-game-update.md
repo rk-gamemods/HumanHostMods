@@ -9,6 +9,31 @@ Invoke `$update-human-host` in this workspace to coordinate this cycle, includin
 - Scrap failed publication runs. Never resume or salvage them. Local update stages and capture rollback have their own recovery rules below.
 - Never push decompiled game code, game DLLs or raw catalogs anywhere. The capture repository stays local with no remote.
 
+## Time budget and fast-path rules
+
+A routine update should take under an hour from Steam install to verified sites:
+capture about 4 minutes, wiki update about 10, independent audits about 10 in
+parallel, rehearsal and publication about 15. Every check below runs once. Repeat
+one only when its inputs changed after it ran.
+
+- **Data-only update** (no rule, code or doc change): the PR touches only generated
+  data, so CI is skipped and the publish gate uses the CI of the identical code
+  (see [production gate](../HumanHostWiki/docs/PUBLICATION.md#production-gate)).
+  Do not add a dated `docs/UPDATE_*.md`; put the dispositions in the PR body.
+  Merge as soon as the PR is open, then rehearse and publish.
+- **Rule or code change**: finish every rule, code and test change before the full
+  update. Run `py -3 tools/run_tests.py --changed main` once, after the last change.
+  Do not also run `--all` locally; main CI runs it. Get any independent code review
+  before pushing, so its fixes do not cost a second CI round.
+- **Audits**: start `check_extraction.py --all`, `check_history.py`, `check_reader.py`
+  and `check_release.py` together, each writing its full JSON to a file. Do not pipe
+  them through `tail`, so no audit needs rerunning to read its counts.
+- **Unchanged repeat**: run it only when generator code changed in this cycle.
+- **Browser**: one spot check of the selected release: banner, one entity with source
+  details, and 390-pixel wrapping. Add historical and cross-topic checks only when
+  reader code changed. After publication the receipt verification is sufficient;
+  publication already checks every public file hash.
+
 Start in HumanHostMods and record its path with `$mods = (Get-Location).Path`.
 Wiki commands run from its independent `HumanHostWiki/` checkout.
 Read its [instructions](../HumanHostWiki/AGENTS.md) and [workflow](../HumanHostWiki/docs/WORKFLOW.md).
@@ -235,12 +260,11 @@ $published.repositories.PSObject.Properties | ForEach-Object { $_.Value | Select
 
 Success means latest selects the reviewed release and every destination is
 verified. Publication already observes the exact pushed Pages commits and checks
-public file hashes before selecting the hub. Check the hub plus all 12 topic
-sites using the receipt's `base` URLs and the
-[repository map](../HumanHostWiki/docs/REPOSITORIES.md). Open each landing page;
-check the selected release and version/build, search, historical selection and
-cross-topic navigation. Include any allocated storage or successor sites beyond
-the 13 logical sites. Browser review creates no timing receipt.
+public file hashes before selecting the hub, so a per-site visual pass is not
+required. Open the hub landing page once to confirm the version/build banner.
+Use the receipt's `base` URLs and the
+[repository map](../HumanHostWiki/docs/REPOSITORIES.md) only to diagnose a
+reported problem. Browser review creates no timing receipt.
 If a site serves the wrong release or bytes, retain evidence and diagnose under
 [publication verification](../HumanHostWiki/docs/PUBLICATION.md). Do not declare
 success or manually advance the hub. Publishing moves the refs its rehearsal
