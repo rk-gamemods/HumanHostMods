@@ -150,16 +150,23 @@ def run_process(args, *, timeout, check=True, text=True, encoding="utf-8",
 
 
 if __name__ == "__main__":
+    def report(message):
+        try:
+            print(message, file=sys.stderr, flush=True)
+        except OSError:
+            pass
+
+    # Callers branch on the child's own exit code (the wiki uses 3 for input
+    # review), so pass it through. Runner failures such as a deadline exit 1.
     try:
-        run_process(sys.argv[2:], timeout=float(sys.argv[1]), forward=True)
+        result = run_process(sys.argv[2:], timeout=float(sys.argv[1]), check=False, forward=True)
+        message = f"{os.path.basename(sys.argv[2])}: exit {result.returncode}" if result.returncode else None
+        code = result.returncode if 0 <= result.returncode <= 255 else 1
     except RuntimeError as exc:
-        def report(message):
-            try:
-                print(message, file=sys.stderr, flush=True)
-            except OSError:
-                pass
-        reporter = threading.Thread(target=report, args=(str(exc),), daemon=True)
+        message, code = str(exc), 1
+    if message:
+        reporter = threading.Thread(target=report, args=(message,), daemon=True)
         reporter.start()
         reporter.join(ERROR_WRITE_SECONDS)
         # Bypass stream finalization, which can wait for blocked daemon writers.
-        os._exit(1)
+        os._exit(code)
