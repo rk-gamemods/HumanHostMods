@@ -287,6 +287,17 @@ post-publication state first.
 
 ## 9. Leave a finished workspace
 
+After a verified publication, delete local state the next update does not need,
+then commit the removed `identity/states/` files through the normal PR:
+
+```powershell
+py -3 wiki.py prune --dry-run
+py -3 wiki.py prune
+```
+
+It keeps the latest identity state, extraction run, reader candidate and release
+stage. It refuses while a writer holds the lock or a release is pending.
+
 From HumanHostWiki, check local operational state:
 
 ```powershell
