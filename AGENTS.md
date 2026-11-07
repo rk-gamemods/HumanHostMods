@@ -49,7 +49,7 @@ Steam build from the latest successful or reused capture receipt in `.local/runs
 (`game.version` / `game.build`) or `HumanHostCodebase/BUILD_INFO.md`. Audit the
 captured version against installed input bytes with `tools/check_game_version.py`
 (see [version audit](docs/GAME_CODEBASE.md#what-is-generated)). Last verified pair:
-game 0.8.323 / Steam build 25986463 on 2026-10-16. This is a dated observation,
+game 0.8.330 / Steam build 26507141 on 2026-11-07. This is a dated observation,
 not a pinned current version. Re-check the loader and environment with
 `tools/Get-ModEnvStatus.ps1` and the BepInEx log.
 
