@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "finalize",
+  "status": "fail",
+  "type": "dataflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Users\\Admin\\Documents\\GIT\\GameMods\\HumanHostMods\\docs\\diagrams\\human-host-update\\lineage\\candidate.json",
+    "sha256": "30ef8b7ce6a339a4d55f0cb48cdb2b4a7e4d9b59994225bbc41f081feb584dea",
+    "bytes": 10133
+  },
+  "artifact": {
+    "path": "C:\\Users\\Admin\\Documents\\GIT\\GameMods\\HumanHostMods\\docs\\diagrams\\human-host-update\\lineage\\lineage.html",
+    "sha256": "0a5b9ef8dca08332e4e78fea9e3226fd82aa007b6dfd87052b843bb51d86e5a6",
+    "bytes": 765176
+  },
+  "gates": {
+    "validate": "fail",
+    "deliver": "not-run",
+    "check": "not-run",
+    "browser-check": "not-run"
+  },
+  "failedStage": "validate",
+  "diagnostics": [
+    {
+      "code": "clean-flow/endpoint-side-direction",
+      "severity": "error",
+      "message": "[clean-flow/endpoint-side-direction] dataflow flows[11] id \"source-review\" \"extraction\" -> \"issues\" final segment 1 [315, 445] -> [450, 385] does not honor toSide \"left\" — it must run horizontal rightward from the left; keep automatic routing, or choose fromSide/toSide and via points whose first and final segments cross node borders perpendicularly.",
+      "subject": {
+        "diagramType": "dataflow",
+        "collection": "flows",
+        "index": 11,
+        "id": "source-review",
+        "from": "extraction",
+        "to": "issues"
+      },
+      "evidence": {
+        "endpoint": "target",
+        "authoredField": "toSide",
+        "sideOrigin": "authored",
+        "side": "left",
+        "segmentIndex": 1,
+        "from": [
+          315,
+          445
+        ],
+        "to": [
+          450,
+          385
+        ],
+        "expectedAxis": "horizontal",
+        "expectedDirection": "rightward from the left"
+      },
+      "supportedFixes": [
+        "keep automatic routing, or choose fromSide/toSide and via points whose first and final segments cross node borders perpendicularly"
+      ]
+    },
+    {
+      "code": "layout/constraint",
+      "severity": "error",
+      "message": "Flow \"unknown fields\" has a diagonal segment from (315, 445) to (450, 385) — align via[0] with its adjacent point by sharing the same x or y coordinate.",
+      "subject": {
+        "diagramType": "dataflow"
+      }
+    }
+  ],
+  "diagnosticSummary": {
+    "total": 2,
+    "shown": 2,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Users\\Admin\\Documents\\GIT\\GameMods\\HumanHostMods\\docs\\diagrams\\human-host-update\\lineage\\review-4\\lineage.finalize.json",
+    "summaryReceipt": "C:\\Users\\Admin\\Documents\\GIT\\GameMods\\HumanHostMods\\docs\\diagrams\\human-host-update\\lineage\\review-4\\lineage.finalize-summary.json"
+  },
+  "update": {
+    "status": "update_available",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.1.0",
+    "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.1.0",
+    "severity": "normal",
+    "checkedAt": "2026-10-16T15:36:04.442Z",
+    "source": "cache",
+    "noticeRequired": true,
+    "noticeText": "Archify update: 3.0.1 → 3.1.0. A previous check at 2026-10-16T15:36:04.442Z found a newer release. Release notes: https://github.com/tt-a1i/archify/releases/tag/v3.1.0. The installed Skill has not changed; ask to snooze or ignore this reminder.",
+    "eventKey": "archify@sha256:ffedc53390c9da6e859f41e432c5d2d0615a23cf00a503181f07efbba88a7ce8"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 522,
+  "nextAction": {
+    "action": "edit-in-place",
+    "candidate": "C:\\Users\\Admin\\Documents\\GIT\\GameMods\\HumanHostMods\\docs\\diagrams\\human-host-update\\lineage\\candidate.json",
+    "constraint": "Preserve unaffected semantics and geometry; do not replace the whole candidate.",
+    "then": "finalize-once"
+  }
+}

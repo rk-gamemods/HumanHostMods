@@ -10,12 +10,13 @@ Set-Content -LiteralPath (Join-Path $game 'Human Host.exe') -Value ''
 Set-Content -LiteralPath (Join-Path $wiki 'wiki.py') -Value ''
 $global:DecompileHandoffCalls = [System.Collections.Generic.List[object]]::new()
 $global:DecompileHandoffFailCall = 0
+$global:DecompileHandoffFailCode = 7
 $global:DecompileHandoffTimingSupported = $false
 $global:DecompileHandoffThrowHelp = $false
 $global:DecompileHandoffReceipt = Join-Path $repoRoot '.local\runs\capture-20261003T000000Z-123-89abcdef01234567.json'
 function py {
     $global:DecompileHandoffCalls.Add(@($args))
-    $global:LASTEXITCODE = if ($global:DecompileHandoffCalls.Count -eq $global:DecompileHandoffFailCall) { 7 } else { 0 }
+    $global:LASTEXITCODE = if ($global:DecompileHandoffCalls.Count -eq $global:DecompileHandoffFailCall) { $global:DecompileHandoffFailCode } else { 0 }
     if ($args[-1] -eq '--help') {
         if ($global:DecompileHandoffThrowHelp) { throw 'Native help command failed under strict native error handling.' }
         if ($global:DecompileHandoffTimingSupported) { 'options: --source --operator-report --capture-timing PATH' }
@@ -97,9 +98,12 @@ try {
     $global:DecompileHandoffThrowHelp = $false
     $global:DecompileHandoffFailCall = 3
     Run-Case @{} 3 'wiki update failed'
+    $global:DecompileHandoffFailCode = 3
+    Run-Case @{} 3 'wiki input precheck requires source review'
+    $global:DecompileHandoffFailCode = 7
     $global:DecompileHandoffFailCall = 1
     Run-Case @{SkipWiki = $true} 1 'Game codebase refresh failed (exit 7).'
-    Write-Host 'Decompile/wiki handoff: 12 cases passed.'
+    Write-Host 'Decompile/wiki handoff: 13 cases passed.'
 } finally {
     # The fixture has no Git objects or protected files. Bound its exact path.
     $resolved = [System.IO.Path]::GetFullPath($fixture)

@@ -1,0 +1,40 @@
+{
+  "reviewed_at_utc": "2026-10-16T15:55:11.784800+00:00",
+  "reviewer": "Codex",
+  "evidence_kind": "perceptual-review",
+  "scope": "All four fresh light/dark endpoint captures per artifact: labels, routes, legend fit and clipping. The retained three-bend receipt route is clear.",
+  "artifacts": [
+    {
+      "path": "workflow/workflow.html",
+      "artifact_sha256": "05b7dca3e0e5c1e2638ee70d88be0f3c74e8510a17c1fc835dd7119aca2d318d",
+      "specification_sha256": "85f9ff1fa34a02adce764c22dab0f242ac8038f270f02eeed30c349a41dce05f",
+      "browser_evidence": "passed",
+      "visual_review": "passed",
+      "correction_rounds": 0,
+      "capture_receipt": "workflow/review-3/workflow.visual-check.json"
+    },
+    {
+      "path": "lineage/lineage.html",
+      "artifact_sha256": "8bb07fb8cd02f342a92c0c5165c5da86611d11ed9ecc655a041dc327a50e5ab1",
+      "specification_sha256": "84e71be54f52bde8b8ea09b80a952f3abd2dc18fcd375a4a2ab75072bbdacc20",
+      "browser_evidence": "passed",
+      "visual_review": "passed",
+      "correction_rounds": 1,
+      "capture_receipt": "lineage/review-5/lineage.visual-check.json"
+    }
+  ],
+  "capture_viewports": [
+    [
+      1440,
+      900
+    ],
+    [
+      2048,
+      1320
+    ]
+  ],
+  "capture_themes": [
+    "light",
+    "dark"
+  ]
+}

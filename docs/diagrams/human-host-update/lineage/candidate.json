@@ -1,0 +1,458 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Human Host wiki source lineage",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      580
+    ],
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "selected data"
+        },
+        "security": {
+          "label": "review gate"
+        },
+        "dashed": {
+          "label": "source inputs"
+        },
+        "database": {
+          "label": "records"
+        }
+      }
+    },
+    "output": "docs/diagrams/human-host-update/lineage/lineage.html",
+    "repository": {
+      "url": "https://github.com/rk-gamemods/HumanHostWiki.git",
+      "revision": "8e23a499d51389a016d5817af88f2b7378b8aa08",
+      "link_mode": "local-only"
+    }
+  },
+  "stages": [
+    {
+      "label": "Local source"
+    },
+    {
+      "label": "Selected facts"
+    },
+    {
+      "label": "Stable identity"
+    },
+    {
+      "label": "Pinned release"
+    },
+    {
+      "label": "Published reader"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "capture",
+      "type": "database",
+      "label": "Captured Git snapshot",
+      "sublabel": "Source + catalogs stay local",
+      "stage": 0,
+      "row": 1,
+      "width": 144,
+      "sources": [
+        {
+          "path": "wikibuild/snapshots.py",
+          "line": 42,
+          "end_line": 66
+        }
+      ]
+    },
+    {
+      "id": "receipt",
+      "type": "database",
+      "label": "Input receipt",
+      "sublabel": "Commit, build and version",
+      "stage": 0,
+      "row": 0,
+      "width": 144,
+      "sources": [
+        {
+          "path": "wikibuild/snapshots.py",
+          "line": 67,
+          "end_line": 89
+        }
+      ]
+    },
+    {
+      "id": "extraction",
+      "type": "backend",
+      "label": "Explicit field extraction",
+      "sublabel": "Pinned reads and exact evidence",
+      "stage": 1,
+      "row": 1,
+      "width": 160,
+      "sources": [
+        {
+          "path": "wikibuild/extraction.py",
+          "line": 83,
+          "end_line": 158
+        }
+      ]
+    },
+    {
+      "id": "identity",
+      "type": "database",
+      "label": "Canonical identities",
+      "sublabel": "Revisions + source lineage",
+      "stage": 2,
+      "row": 1,
+      "width": 160,
+      "sources": [
+        {
+          "path": "wikibuild/history.py",
+          "line": 326,
+          "end_line": 411
+        }
+      ]
+    },
+    {
+      "id": "corrections",
+      "type": "backend",
+      "label": "Reviewed mappings",
+      "sublabel": "Evidence resolves lineage",
+      "stage": 2,
+      "row": 0,
+      "width": 160,
+      "sources": [
+        {
+          "path": "wikibuild/history.py",
+          "line": 294,
+          "end_line": 300
+        },
+        {
+          "path": "docs/IDENTITY.md",
+          "line": 43,
+          "end_line": 59
+        }
+      ]
+    },
+    {
+      "id": "curation",
+      "type": "database",
+      "label": "Topic-owned articles",
+      "sublabel": "Explanations + source checks",
+      "stage": 3,
+      "row": 0,
+      "width": 160,
+      "sources": [
+        {
+          "path": "docs/CURATED.md",
+          "line": 3,
+          "end_line": 16
+        },
+        {
+          "path": "wikibuild/reader.py",
+          "line": 469,
+          "end_line": 475
+        }
+      ]
+    },
+    {
+      "id": "issues",
+      "type": "security",
+      "label": "Review before reader",
+      "sublabel": "Source and identity gaps",
+      "stage": 2,
+      "row": 2,
+      "width": 160,
+      "sources": [
+        {
+          "path": "wikibuild/pipeline.py",
+          "line": 94,
+          "end_line": 113
+        }
+      ]
+    },
+    {
+      "id": "reader",
+      "type": "backend",
+      "label": "Immutable reader",
+      "sublabel": "Facts, history and search",
+      "stage": 3,
+      "row": 1,
+      "width": 160,
+      "sources": [
+        {
+          "path": "wikibuild/reader.py",
+          "line": 468,
+          "end_line": 497
+        },
+        {
+          "path": "wikibuild/pipeline.py",
+          "line": 144,
+          "end_line": 155
+        }
+      ]
+    },
+    {
+      "id": "release",
+      "type": "database",
+      "label": "Local release manifest",
+      "sublabel": "Validated child commits",
+      "stage": 3,
+      "row": 2,
+      "width": 160,
+      "sources": [
+        {
+          "path": "wikibuild/release.py",
+          "line": 96,
+          "end_line": 115
+        },
+        {
+          "path": "wikibuild/pipeline.py",
+          "line": 160,
+          "end_line": 190
+        }
+      ]
+    },
+    {
+      "id": "publish",
+      "type": "security",
+      "label": "Publication gate",
+      "sublabel": "Merged main, CI and rehearsal",
+      "stage": 4,
+      "row": 2,
+      "width": 160,
+      "sources": [
+        {
+          "path": "docs/PUBLICATION.md",
+          "line": 1,
+          "end_line": 45
+        }
+      ]
+    },
+    {
+      "id": "sites",
+      "type": "frontend",
+      "label": "Hub + topic sites",
+      "sublabel": "Published bytes and topic links",
+      "stage": 4,
+      "row": 1,
+      "width": 160,
+      "sources": [
+        {
+          "path": "docs/PUBLICATION.md",
+          "line": 219,
+          "end_line": 235
+        }
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "capture-registration",
+      "from": "capture",
+      "to": "receipt",
+      "label": "metadata hashes",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        100,
+        215
+      ]
+    },
+    {
+      "id": "pinned-data",
+      "from": "capture",
+      "to": "extraction",
+      "label": "selected Git reads",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [
+        207,
+        315
+      ]
+    },
+    {
+      "id": "receipt-pin",
+      "from": "receipt",
+      "to": "extraction",
+      "label": "commit + build",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          220,
+          157
+        ],
+        [
+          220,
+          205
+        ],
+        [
+          315,
+          205
+        ]
+      ],
+      "labelAt": [
+        268,
+        195
+      ]
+    },
+    {
+      "id": "fact-identities",
+      "from": "extraction",
+      "to": "identity",
+      "label": "observations",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [
+        423,
+        315
+      ]
+    },
+    {
+      "id": "reviewed-corrections",
+      "from": "corrections",
+      "to": "identity",
+      "label": "reviewed evidence",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        530,
+        215
+      ]
+    },
+    {
+      "id": "unresolved-sources",
+      "from": "identity",
+      "to": "issues",
+      "label": "preserved gaps",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        530,
+        327
+      ]
+    },
+    {
+      "id": "canonical-reader",
+      "from": "identity",
+      "to": "reader",
+      "label": "precheck clear",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [
+        637,
+        215
+      ]
+    },
+    {
+      "id": "authored-reader",
+      "from": "curation",
+      "to": "reader",
+      "label": "checked explanations",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        745,
+        215
+      ]
+    },
+    {
+      "id": "reader-release",
+      "from": "reader",
+      "to": "release",
+      "label": "validated candidate",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        745,
+        327
+      ]
+    },
+    {
+      "id": "release-publication",
+      "from": "release",
+      "to": "publish",
+      "label": "reviewed release",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [
+        852,
+        335
+      ]
+    },
+    {
+      "id": "verified-sites",
+      "from": "publish",
+      "to": "sites",
+      "label": "verified commits",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        960,
+        327
+      ]
+    },
+    {
+      "id": "source-review",
+      "from": "extraction",
+      "to": "issues",
+      "label": "unknown fields",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          315,
+          385
+        ]
+      ],
+      "labelAt": [
+        315,
+        335
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Source boundary",
+      "items": [
+        "The capture repository has no remote. The wiki reads it in place and publishes selected derived facts.",
+        "Input receipts, identity history, local releases and publication receipts have separate identities."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Lineage review",
+      "items": [
+        "A missing source object, an unsupported capture and an unresolved surviving object are different states.",
+        "Source and identity gaps stop before reader work. Repair owning rules and use the cached precheck before the full update."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Proof limits",
+      "items": [
+        "Stage checks establish pinned inputs, output hashes and reference integrity.",
+        "Publication verifies released bytes. Gameplay verification still requires separate evidence."
+      ]
+    }
+  ]
+}

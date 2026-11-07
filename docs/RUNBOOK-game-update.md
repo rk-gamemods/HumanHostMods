@@ -1,5 +1,7 @@
 # Runbook: game update to published wiki
 
+Invoke `$update-human-host` in this workspace to coordinate this cycle, including the parallel Expanded Hordes review. The [process diagrams](diagrams/human-host-update/README.md) show the workflow and source lineage. This runbook owns the commands and recovery rules.
+
 ## Rules
 
 - The normal update stops at a local release and retention.
@@ -7,11 +9,38 @@
 - Scrap failed publication runs. Never resume or salvage them. Local update stages and capture rollback have their own recovery rules below.
 - Never push decompiled game code, game DLLs or raw catalogs anywhere. The capture repository stays local with no remote.
 
+## Time budget and fast-path rules
+
+A routine update should take under an hour from Steam install to verified sites:
+capture about 4 minutes, wiki update about 10, independent audits about 10 in
+parallel, rehearsal and publication about 15. Every check below runs once. Repeat
+one only when its inputs changed after it ran.
+
+- **Data-only update** (no rule, code or doc change): the PR touches only generated
+  data, so CI is skipped and the publish gate uses the CI of the identical code
+  (see [production gate](../HumanHostWiki/docs/PUBLICATION.md#production-gate)).
+  Do not add a dated `docs/UPDATE_*.md`; put the dispositions in the PR body.
+  Merge as soon as the PR is open, then rehearse and publish.
+- **Rule or code change**: finish every rule, code and test change before the full
+  update. Run `py -3 tools/run_tests.py --changed main` once, after the last change.
+  Do not also run `--all` locally; main CI runs it. Get any independent code review
+  before pushing, so its fixes do not cost a second CI round.
+- **Audits**: start `check_extraction.py --all`, `check_history.py`, `check_reader.py`
+  and `check_release.py` together, each writing its full JSON to a file. Do not pipe
+  them through `tail`, so no audit needs rerunning to read its counts.
+- **Unchanged repeat**: run it only when generator code changed in this cycle.
+- **Browser**: one spot check of the selected release: banner, one entity with source
+  details, and 390-pixel wrapping. Add historical and cross-topic checks only when
+  reader code changed. After publication the receipt verification is sufficient;
+  publication already checks every public file hash.
+
 Start in HumanHostMods and record its path with `$mods = (Get-Location).Path`.
 Wiki commands run from its independent `HumanHostWiki/` checkout.
 Read its [instructions](../HumanHostWiki/AGENTS.md) and [workflow](../HumanHostWiki/docs/WORKFLOW.md).
 Use PowerShell 7 and the dependencies in [capture setup](GAME_CODEBASE.md#setup-and-refresh).
 Resolve existing work in each owning repository. Do not bypass dirty-state checks or discard unknown files.
+
+Finish changes and relevant tests for contract-owning capture/wiki code, configuration and definitions before starting capture or wiki generation. Keep those inputs unchanged while its writer runs. Wait for command exit before editing those inputs or accepting the new outputs as final.
 
 ## 1. Detect the update
 
@@ -85,6 +114,24 @@ Only if the wrapper's wiki handoff failed, rerun the same update against the exi
 py -3 wiki.py update --operator-report
 ```
 
+An input-review stop is different from an execution failure. The wiki now runs
+register, extraction and identity checks before network, reader, release and
+retention work. Unknown source contracts stop even before identity processing.
+Exit 3 and `input-review-required` name a grouped immutable report under
+`.local/pipeline/prechecks/`; the selected release stays unchanged.
+
+Review those changes against the pinned source and repair their owning rules.
+Then use the fast prefix alone until it reports `inputs-ready`:
+
+```powershell
+py -3 wiki.py precheck --operator-report
+```
+
+Precheck reuses the existing extraction and identity caches. It creates no reader
+or release and does not check authored articles or live links. Once clean, rerun
+the normal `update`; its expensive stages reuse the accepted precheck artifacts.
+Do not bypass unknown fields or identity gaps to force release generation.
+
 If capture used a nondefault source, preserve its `--source <path>` on the retry.
 Success prints the grouped report, `release_id` and `next_step`. It finishes the
 local release, release retention and reader retention. It does not publish sites.
@@ -132,8 +179,15 @@ failures, unavailable providers and retention issues separate. Decide whether
 the explicit gaps are acceptable for publication; successful stages alone do not
 prove gameplay verification. If corrections are needed, make, review and commit
 them in their owning repositories. Identity corrections and extraction rules
-belong in the umbrella; curated content belongs in its child repository. When
-reviewed child commits change, adopt them with `py -3 wiki.py lock` before the
+belong in the umbrella; curated content belongs in its child repository.
+
+When changing the reader, check the existing preview before final generation.
+Inspect the hub and topic landing pages, then expand source details at a
+390-pixel viewport and verify that long keys and hashes wrap without horizontal
+overflow. Batch fixes and relevant tests before starting the update; inspect
+the generated release after it exits.
+
+When reviewed child commits change, adopt them with `py -3 wiki.py lock` before the
 update, or update rejects the stale checkout lock. Then rerun the update and
 select the resulting release. See [curated changes](../HumanHostWiki/docs/CURATED.md).
 Review and merge umbrella changes, use main at fetched origin/main, and wait for
@@ -177,7 +231,7 @@ first failed check, in this order:
 2. `origin` identifies `github.com/rk-gamemods/HumanHostWiki` through accepted HTTPS or SSH syntax.
 3. A bounded main fetch succeeds and HEAD equals fetched origin/main.
 4. The newest matching `CI` run/attempt for that exact commit is completed and successful, from a main push of `.github/workflows/ci.yml`. Missing or malformed evidence fails.
-5. A merged PR has a nonempty `merged_at` and this exact `merge_commit_sha`. A direct push is insufficient.
+5. A merged PR has GraphQL `mergeCommit.oid` equal to this exact commit. A direct push is insufficient.
 6. The hash-checked rehearsal receipt exists, uses the supported schema, and matches the release, workspace commit and publication contract, including the rehearsal runner. Its UTC timestamp is at most 24 hours old and not in the future.
 7. Receipt refs have valid unique repository/branch identities and valid SHAs or null. They cover main and gh-pages for every current destination. Every recorded live ref still matches.
 8. Destination observations are valid, unique and complete. Live identity, visibility, administrator permission and Pages settings still match, including absent or disabled destinations. Existing repositories must be public, unarchived and not forks; Pages must use gh-pages at `/`, legacy branch publishing, no CNAME and the expected URL.
@@ -200,18 +254,17 @@ From HumanHostWiki, inspect the completed receipt:
 
 ```powershell
 Get-Content publications/latest.json
-$published = Get-Content "publications/$releaseId.json" -Raw | ConvertFrom-Json
+$published = (Get-Content "publications/$releaseId.json" -Raw | ConvertFrom-Json).payload
 $published.repositories.PSObject.Properties | ForEach-Object { $_.Value | Select-Object name, base, main, pages, verified }
 ```
 
 Success means latest selects the reviewed release and every destination is
 verified. Publication already observes the exact pushed Pages commits and checks
-public file hashes before selecting the hub. Check the hub plus all 12 topic
-sites using the receipt's `base` URLs and the
-[repository map](../HumanHostWiki/docs/REPOSITORIES.md). Open each landing page;
-check the selected release and version/build, search, historical selection and
-cross-topic navigation. Include any allocated storage or successor sites beyond
-the 13 logical sites. Browser review creates no timing receipt.
+public file hashes before selecting the hub, so a per-site visual pass is not
+required. Open the hub landing page once to confirm the version/build banner.
+Use the receipt's `base` URLs and the
+[repository map](../HumanHostWiki/docs/REPOSITORIES.md) only to diagnose a
+reported problem. Browser review creates no timing receipt.
 If a site serves the wrong release or bytes, retain evidence and diagnose under
 [publication verification](../HumanHostWiki/docs/PUBLICATION.md). Do not declare
 success or manually advance the hub. Publishing moves the refs its rehearsal
@@ -233,6 +286,17 @@ post-publication state first.
 - **Interrupted capture:** first confirm the old process has exited. Rerun the full capture command in step 2. Its journal rolls back recognized incomplete swaps or retains the exact completed commit. Never delete a live journal/backup. If recovery reports ambiguity, stop and inspect the reported output, staging and backup identities. Scrap only the proven incomplete capture, preserve the valid baseline and rerun; do not transplant guessed files or commits. No automated abandonment flag exists. See [capture recovery](GAME_CODEBASE.md#comparisons-failure-recovery-and-validation).
 
 ## 9. Leave a finished workspace
+
+After a verified publication, delete local state the next update does not need,
+then commit the removed `identity/states/` files through the normal PR:
+
+```powershell
+py -3 wiki.py prune --dry-run
+py -3 wiki.py prune
+```
+
+It keeps the latest identity state, extraction run, reader candidate and release
+stage. It refuses while a writer holds the lock or a release is pending.
 
 From HumanHostWiki, check local operational state:
 
@@ -263,3 +327,14 @@ Unknown or protected files require ownership review, not blanket deletion. See
 [retention](../HumanHostWiki/docs/RETENTION.md) and
 [workflow recovery](../HumanHostWiki/docs/WORKFLOW.md#failure-and-recovery).
 These final read-only checks create no timing receipt.
+
+Refresh the Munch indexes using explicit tracked owner paths, as prescribed by
+the skill. Keep documentation embeddings disabled and exclude generated readers,
+receipts, nested repositories and build outputs from workspace traversal.
+Code-index file coverage does not prove that every decompiled symbol parsed.
+ILSpy compiler-local names can hide later declarations from symbol search; use
+the same index's text search and original captured file when that happens.
+For 0.8.323, `Top_Info` is available through indexed text at
+`Build_System/Build_System.decompiled.cs:5775` despite the symbol-parser gap.
+Keep the captured source unchanged; the wiki's restricted metadata-parser
+normalization is separate from the code-index service.

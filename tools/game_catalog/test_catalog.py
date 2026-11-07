@@ -241,6 +241,18 @@ class ProcessTests(unittest.TestCase):
                 run_process(["stand-in"], timeout=0)
         wait.assert_called_once_with(timeout=30)
 
+    def test_cli_preserves_the_child_exit_code(self):
+        # Decompile-GameCode.ps1 distinguishes wiki input review (3) from execution failure.
+        runner = Path(__file__).with_name("processes.py")
+        for code in (0, 3, 9):
+            with self.subTest(code=code):
+                result = subprocess.run([sys.executable, str(runner), "10", sys.executable, "-c",
+                                         f"import sys; sys.exit({code})"],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, code, result.stderr)
+                if code:
+                    self.assertIn(f"exit {code}", result.stderr)
+
     def test_cli_exits_when_neither_output_pipe_is_drained(self):
         pidfile = self.root / "cli-child-pid"
         code = ("import os,sys,threading,time; from pathlib import Path; "

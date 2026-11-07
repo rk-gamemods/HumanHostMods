@@ -1,0 +1,6 @@
+interface:
+  display_name: "UpdateHumanHost"
+  short_description: "Update game capture, wiki and mod compatibility"
+  default_prompt: "Use $update-human-host to capture the installed Human Host update, resolve wiki source issues, validate and publish the wiki, and prepare any Expanded Hordes develop PR for my review."
+policy:
+  allow_implicit_invocation: false
